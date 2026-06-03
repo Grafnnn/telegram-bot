@@ -1,7 +1,9 @@
 """Published fabric recommendation helpers.
 
-The recommendation layer never creates fabrics and never returns IDs outside the
-candidate list it receives from the database.
+The recommendation layer treats a fabric as an existing database row only.
+Fabric photos come only from admin uploads. GPT may analyze a user request and
+rank candidate fabric IDs, but it must never create or invent fabric records,
+photos, prices, stock statuses, names, SKUs, or materials.
 """
 
 from __future__ import annotations
