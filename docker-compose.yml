@@ -1,0 +1,24 @@
+services:
+  backend:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment:
+      DATABASE_URL: sqlite:///./app.db
+    command: sh -c "pip install -r requirements.txt && uvicorn backend.app.main:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "8000:8000"
+
+  bot:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment:
+      BACKEND_URL: http://backend:8000
+      BACKEND_PUBLIC_URL: http://localhost:8000
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    command: sh -c "pip install -r requirements.txt && python -m bot.app.main"
+    depends_on:
+      - backend
