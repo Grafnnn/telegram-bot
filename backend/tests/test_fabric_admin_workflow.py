@@ -107,3 +107,19 @@ def test_admin_can_create_upload_publish_fabric_and_see_it_in_public_catalog(cli
     catalog_ids = {item["id"] for item in catalog_items}
     assert fabric_id in catalog_ids
     assert draft_id not in catalog_ids
+
+    recommend_response = client.post(
+        "/api/catalog/fabrics/recommend",
+        json={
+            "user_text": "Мне нужна ткань для летнего платья на свадьбу, чтобы выглядело дорого, но не ярко",
+            "limit": 3,
+        },
+    )
+    assert recommend_response.status_code == 200, recommend_response.text
+    recommendation_payload = recommend_response.json()
+    recommendation_ids = {item["fabric"]["id"] for item in recommendation_payload["items"]}
+    assert fabric_id in recommendation_ids
+    assert draft_id not in recommendation_ids
+    assert recommendation_payload["preferences"]["garment_type"] == "платье"
+    assert recommendation_payload["preferences"]["season"] == "лето"
+    assert all(item["explanation"] for item in recommendation_payload["items"])

@@ -27,6 +27,11 @@ async def recommend(message: Message, state: FSMContext) -> None:
         await message.answer("Не нашла подходящих опубликованных тканей. Попробуйте изменить описание.")
         return
     lines = ["Подходящие ткани:"]
-    for fabric in fabrics:
-        lines.append(f"• {fabric.get('name')} ({fabric.get('sku')})")
+    for item in fabrics:
+        fabric = item.get("fabric", item)
+        explanation = item.get("explanation")
+        line = f"• {fabric.get('name')} ({fabric.get('sku')})"
+        if explanation:
+            line += f" — {explanation}"
+        lines.append(line)
     await message.answer("\n".join(lines))

@@ -153,12 +153,18 @@ curl -X POST http://localhost:8000/api/admin/fabrics \
 - SQLAlchemy 2.x модели PostgreSQL и initial Alembic migration.
 - JWT login `/api/auth/login` и `/api/auth/me`.
 - Защищённые `/api/admin/*` endpoints для тканей, фасонов и генераций.
-- Public catalog endpoints для опубликованных тканей и фасонов.
+- Public catalog endpoints для опубликованных тканей и фасонов; `/api/catalog/fabrics/recommend` анализирует текстовый запрос, ранжирует только опубликованные ткани из базы и возвращает объяснения подбора.
 - Storage service для безопасной загрузки изображений в подпапки `UPLOAD_DIR`.
 - Заглушки AI/recommendation/image generation с правильными интерфейсами.
 - Aiogram 3 scaffold бота с командами `/start`, `/catalog`, `/pick`, `/styles`, `/help`.
 - React + TypeScript + Vite + Tailwind scaffold админки на русском языке.
 - Dockerfile для backend, bot и admin-frontend.
+
+## Подбор ткани по описанию
+
+Endpoint `POST /api/catalog/fabrics/recommend` принимает текст пользователя, например «Мне нужна ткань для летнего платья на свадьбу, чтобы выглядело дорого, но не ярко». Backend извлекает признаки запроса (`garment_type`, `occasion`, `season`, `desired_style`, `colors`, `constraints`), берет только ткани со `status="published"` и возвращает реальные ткани из базы с `score` и объяснением, почему каждая ткань подходит.
+
+Если `OPENAI_API_KEY` пока равен `put_openai_key_here`, используется локальный безопасный анализ запроса без обращения к OpenAI; в ответе поле `ai.ok=false` и есть понятное сообщение конфигурации. После подключения реальной OpenAI-логики контракт endpoint останется тем же.
 
 ## Что пока является заглушкой
 

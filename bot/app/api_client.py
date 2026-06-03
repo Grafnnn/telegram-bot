@@ -36,4 +36,6 @@ class BackendAPIClient:
 
     async def recommend_fabrics(self, user_text: str) -> list[dict]:
         data = await self._request("POST", "/catalog/fabrics/recommend", json={"user_text": user_text, "limit": 5})
+        if isinstance(data, dict):
+            return data.get("items", [])
         return data or []

@@ -94,3 +94,16 @@ class FabricAIRequest(BaseModel):
 class FabricRecommendRequest(BaseModel):
     user_text: str
     limit: int = 5
+
+
+class FabricRecommendationItem(BaseModel):
+    fabric: FabricRead
+    score: int
+    explanation: str
+    matched_fields: list[str] = Field(default_factory=list)
+
+
+class FabricRecommendResponse(BaseModel):
+    preferences: dict
+    items: list[FabricRecommendationItem]
+    ai: dict

@@ -10,9 +10,9 @@ from sqlalchemy.orm import Session, selectinload
 from app.database import get_db
 from app.models import Fabric, GarmentStyle
 from app.schemas.common import PaginatedResponse
-from app.schemas.fabric import FabricRead, FabricRecommendRequest
+from app.schemas.fabric import FabricRead, FabricRecommendRequest, FabricRecommendResponse
 from app.schemas.garment_style import GarmentStyleRead
-from app.services.fabric_recommendation_service import rank_fabrics_for_user
+from app.services.fabric_recommendation_service import build_fabric_recommendations
 from app.services.openai_service import extract_fabric_preferences
 from app.utils.pagination import paginate
 
@@ -26,17 +26,24 @@ def _published_fabric_or_404(db: Session, fabric_id: UUID) -> Fabric:
     return fabric
 
 
-@router.post("/fabrics/recommend", response_model=list[FabricRead])
+@router.post("/fabrics/recommend", response_model=FabricRecommendResponse)
 def recommend_fabrics(payload: FabricRecommendRequest, db: Session = Depends(get_db)):
-    stmt = select(Fabric).options(selectinload(Fabric.images)).where(Fabric.status == "published")
-    query = payload.user_text.strip()
-    if query:
-        like = f"%{query}%"
-        stmt = stmt.where(or_(Fabric.name.ilike(like), Fabric.category.ilike(like), Fabric.color.ilike(like), Fabric.pattern.ilike(like), Fabric.description_for_gpt.ilike(like)))
-    candidates = list(db.scalars(stmt.limit(max(payload.limit * 3, 10))).unique())
+    stmt = (
+        select(Fabric)
+        .options(selectinload(Fabric.images))
+        .where(Fabric.status == "published")
+        .order_by(Fabric.created_at.desc())
+        .limit(max(payload.limit * 10, 50))
+    )
+    candidates = list(db.scalars(stmt).unique())
     preferences_result = extract_fabric_preferences(payload.user_text)
-    ranked = rank_fabrics_for_user(preferences_result.get("preferences", {"query": payload.user_text}), candidates)
-    return ranked[: payload.limit]
+    preferences = preferences_result.get("preferences", {"query": payload.user_text})
+    recommendations = build_fabric_recommendations(preferences, candidates, payload.limit)
+    return {
+        "preferences": preferences,
+        "items": recommendations,
+        "ai": {"ok": preferences_result.get("ok", False), "error": preferences_result.get("error")},
+    }
 
 
 @router.get("/fabrics", response_model=PaginatedResponse[FabricRead])

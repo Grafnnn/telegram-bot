@@ -20,10 +20,95 @@ def _not_configured() -> dict:
     return {"ok": False, "error": OPENAI_ERROR}
 
 
+def _contains_any(text: str, words: list[str]) -> bool:
+    return any(word in text for word in words)
+
+
+def _local_extract_fabric_preferences(user_text: str) -> dict:
+    """Extract recommendation signals locally until the real GPT integration is added."""
+
+    text = user_text.lower()
+    garment_type = None
+    if _contains_any(text, ["плать", "сарафан"]):
+        garment_type = "платье"
+    elif _contains_any(text, ["костюм", "жакет", "пиджак"]):
+        garment_type = "костюм"
+    elif _contains_any(text, ["юбк"]):
+        garment_type = "юбка"
+    elif _contains_any(text, ["рубаш", "блуз"]):
+        garment_type = "блуза"
+
+    occasion = None
+    if _contains_any(text, ["свадьб", "венчани"]):
+        occasion = "свадьба"
+    elif _contains_any(text, ["вечер", "праздник", "торжеств"]):
+        occasion = "вечернее мероприятие"
+    elif _contains_any(text, ["офис", "работ"]):
+        occasion = "офис"
+
+    season = None
+    if _contains_any(text, ["лет", "жар", "тепл"]):
+        season = "лето"
+    elif _contains_any(text, ["зим", "холод"]):
+        season = "зима"
+    elif _contains_any(text, ["весн"]):
+        season = "весна"
+    elif _contains_any(text, ["осен"]):
+        season = "осень"
+
+    desired_style = None
+    if _contains_any(text, ["дорог", "роскош", "элегант", "преми", "наряд"]):
+        desired_style = "дорого и элегантно"
+    elif _contains_any(text, ["повседнев", "базов"]):
+        desired_style = "повседневно"
+
+    color_words = [
+        "бел",
+        "молоч",
+        "айвори",
+        "беж",
+        "пудр",
+        "розов",
+        "голуб",
+        "син",
+        "черн",
+        "сер",
+        "зелен",
+        "красн",
+        "ярк",
+        "пастел",
+    ]
+    colors = [word for word in color_words if word in text]
+
+    constraints = []
+    if _contains_any(text, ["не яр", "неяр", "без яр", "спокойн", "сдержан"]):
+        constraints.append("не ярко")
+    if _contains_any(text, ["не мнется", "немнущ", "не мял"]):
+        constraints.append("мало мнется")
+    if _contains_any(text, ["дыша", "легк", "воздуш"]):
+        constraints.append("легкая и дышащая")
+
+    stop_words = {"мне", "нужна", "нужен", "ткань", "для", "чтобы", "выглядело", "но", "или", "под", "на"}
+    keywords = [word.strip(".,!?;:()[]{}«»\"'") for word in text.split()]
+    keywords = [word for word in keywords if len(word) > 2 and word not in stop_words]
+
+    return {
+        "query": user_text,
+        "garment_type": garment_type,
+        "occasion": occasion,
+        "season": season,
+        "desired_style": desired_style,
+        "colors": colors,
+        "constraints": constraints,
+        "keywords": keywords,
+    }
+
+
 def extract_fabric_preferences(user_text: str) -> dict:
+    preferences = _local_extract_fabric_preferences(user_text)
     if not get_settings().is_openai_configured:
-        return {**_not_configured(), "preferences": {"query": user_text}}
-    return {"ok": True, "preferences": {"query": user_text}}
+        return {**_not_configured(), "preferences": preferences}
+    return {"ok": True, "preferences": preferences}
 
 
 def generate_admin_fabric_description(fabric_data: dict, image_url: str | None = None) -> dict:
