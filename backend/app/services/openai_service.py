@@ -28,9 +28,10 @@ def _local_extract_fabric_preferences(user_text: str) -> dict:
     """Extract recommendation signals locally until the real GPT integration is added."""
 
     text = user_text.lower()
+
     garment_type = None
     if _contains_any(text, ["плать", "сарафан"]):
-        garment_type = "платье"
+        garment_type = "летнее платье" if _contains_any(text, ["лет", "жар", "тепл"]) else "платье"
     elif _contains_any(text, ["костюм", "жакет", "пиджак"]):
         garment_type = "костюм"
     elif _contains_any(text, ["юбк"]):
@@ -56,50 +57,61 @@ def _local_extract_fabric_preferences(user_text: str) -> dict:
     elif _contains_any(text, ["осен"]):
         season = "осень"
 
-    desired_style = None
-    if _contains_any(text, ["дорог", "роскош", "элегант", "преми", "наряд"]):
-        desired_style = "дорого и элегантно"
-    elif _contains_any(text, ["повседнев", "базов"]):
-        desired_style = "повседневно"
-
-    color_words = [
-        "бел",
-        "молоч",
-        "айвори",
-        "беж",
-        "пудр",
-        "розов",
-        "голуб",
-        "син",
-        "черн",
-        "сер",
-        "зелен",
-        "красн",
-        "ярк",
-        "пастел",
-    ]
-    colors = [word for word in color_words if word in text]
-
-    constraints = []
+    desired_style: list[str] = []
+    if _contains_any(text, ["дорог", "роскош", "преми", "люкс"]):
+        desired_style.append("дорого")
+        desired_style.append("элегантно")
+    if _contains_any(text, ["элегант", "наряд", "изыск"]) and "элегантно" not in desired_style:
+        desired_style.append("элегантно")
     if _contains_any(text, ["не яр", "неяр", "без яр", "спокойн", "сдержан"]):
-        constraints.append("не ярко")
-    if _contains_any(text, ["не мнется", "немнущ", "не мял"]):
-        constraints.append("мало мнется")
-    if _contains_any(text, ["дыша", "легк", "воздуш"]):
-        constraints.append("легкая и дышащая")
+        desired_style.append("не слишком ярко")
 
-    stop_words = {"мне", "нужна", "нужен", "ткань", "для", "чтобы", "выглядело", "но", "или", "под", "на"}
+    preferred_colors: list[str] = []
+    color_map = {
+        "пастел": "пастельный",
+        "беж": "бежевый",
+        "пудр": "пудровый",
+        "молоч": "молочный",
+        "айвори": "айвори",
+        "бел": "белый",
+        "розов": "розовый",
+        "голуб": "голубой",
+        "сер": "серый",
+    }
+    for marker, color in color_map.items():
+        if marker in text and color not in preferred_colors:
+            preferred_colors.append(color)
+    if not preferred_colors and "не слишком ярко" in desired_style:
+        preferred_colors.extend(["пастельный", "бежевый", "пудровый"])
+
+    avoid: list[str] = []
+    if _contains_any(text, ["не яр", "неяр", "без яр", "слишком яр"]):
+        avoid.append("слишком яркий")
+    if _contains_any(text, ["не прозрач", "не просвеч", "слишком прозрач"]):
+        avoid.append("слишком прозрачный")
+
+    required_properties: list[str] = []
+    if _contains_any(text, ["комфорт", "удоб", "приятн"]):
+        required_properties.append("комфорт")
+    if _contains_any(text, ["драп", "струящ", "пластич"]):
+        required_properties.append("красивая драпировка")
+    if _contains_any(text, ["легк", "воздуш", "дыша", "лет"]):
+        required_properties.append("легкость")
+    if garment_type and "платье" in garment_type and "красивая драпировка" not in required_properties:
+        required_properties.append("красивая драпировка")
+
+    stop_words = {"мне", "нужна", "нужен", "ткань", "для", "чтобы", "выглядело", "но", "или", "под", "на", "хочу"}
     keywords = [word.strip(".,!?;:()[]{}«»\"'") for word in text.split()]
     keywords = [word for word in keywords if len(word) > 2 and word not in stop_words]
 
     return {
-        "query": user_text,
         "garment_type": garment_type,
         "occasion": occasion,
-        "season": season,
         "desired_style": desired_style,
-        "colors": colors,
-        "constraints": constraints,
+        "preferred_colors": preferred_colors,
+        "avoid": avoid,
+        "season": season,
+        "required_properties": required_properties,
         "keywords": keywords,
     }
 

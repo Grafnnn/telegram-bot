@@ -97,9 +97,11 @@ class FabricRecommendRequest(BaseModel):
 
 
 class FabricRecommendationItem(BaseModel):
+    fabric_id: UUID
+    score: float
+    reason: str
+    possible_issue: str | None = None
     fabric: FabricRead
-    score: int
-    explanation: str
     matched_fields: list[str] = Field(default_factory=list)
 
 

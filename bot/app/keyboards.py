@@ -1,6 +1,6 @@
 """Telegram keyboards."""
 
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 
 def main_menu() -> ReplyKeyboardMarkup:
@@ -13,4 +13,10 @@ def main_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="Мои результаты")],
         ],
         resize_keyboard=True,
+    )
+
+
+def pick_fabric_keyboard(fabric_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="Выбрать эту ткань", callback_data=f"pick_fabric:{fabric_id}")]]
     )

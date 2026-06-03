@@ -335,9 +335,9 @@ export default function FabricForm({ mode, fabric, onCreated, onUpdated }: Props
         return;
       }
       setAiPreview(result);
-      setSuccess('AI-описание сгенерировано. Проверьте preview и примите его при необходимости.');
+      setSuccess('Описание карточки подготовлено. Проверьте preview и примите его при необходимости.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Не удалось сгенерировать описание.');
+      setError(err instanceof Error ? err.message : 'Не удалось подготовить описание карточки.');
     } finally {
       setLoadingAction(null);
     }
@@ -441,7 +441,7 @@ export default function FabricForm({ mode, fabric, onCreated, onUpdated }: Props
         <button type="submit" disabled={disabled} className="bg-slate-900 text-white disabled:opacity-50">{mode === 'create' ? buttonLabel('save', 'Сохранить черновик') : buttonLabel('save', 'Сохранить')}</button>
         {mode === 'create' && <button type="button" disabled={disabled} className="bg-green-700 text-white disabled:opacity-50" onClick={saveAndPublish}>{buttonLabel('publish', 'Сохранить и опубликовать')}</button>}
         <button type="button" disabled={disabled} className="border bg-white disabled:opacity-50" onClick={runCheckCard}>{buttonLabel('check', 'Проверить карточку')}</button>
-        <button type="button" disabled={disabled} className="border bg-white disabled:opacity-50" onClick={runGenerateDescription}>{buttonLabel('ai', 'Сгенерировать описание GPT')}</button>
+        <button type="button" disabled={disabled} className="border bg-white disabled:opacity-50" onClick={runGenerateDescription}>{buttonLabel('ai', 'Составить описание карточки')}</button>
         {mode === 'edit' && <button type="button" disabled={disabled} className="bg-green-700 text-white disabled:opacity-50" onClick={() => changeStatus('publish')}>{buttonLabel('publish', 'Опубликовать')}</button>}
         {mode === 'edit' && <button type="button" disabled={disabled} className="bg-yellow-600 text-white disabled:opacity-50" onClick={() => changeStatus('hide')}>{buttonLabel('hide', 'Скрыть')}</button>}
         {mode === 'edit' && <button type="button" disabled={disabled} className="bg-red-700 text-white disabled:opacity-50" onClick={() => changeStatus('archive')}>{buttonLabel('archive', 'Архивировать')}</button>}

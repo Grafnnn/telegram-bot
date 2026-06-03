@@ -117,9 +117,9 @@ def test_admin_can_create_upload_publish_fabric_and_see_it_in_public_catalog(cli
     )
     assert recommend_response.status_code == 200, recommend_response.text
     recommendation_payload = recommend_response.json()
-    recommendation_ids = {item["fabric"]["id"] for item in recommendation_payload["items"]}
+    recommendation_ids = {item["fabric_id"] for item in recommendation_payload["items"]}
     assert fabric_id in recommendation_ids
     assert draft_id not in recommendation_ids
-    assert recommendation_payload["preferences"]["garment_type"] == "платье"
+    assert recommendation_payload["preferences"]["garment_type"] == "летнее платье"
     assert recommendation_payload["preferences"]["season"] == "лето"
-    assert all(item["explanation"] for item in recommendation_payload["items"])
+    assert all(item["reason"] for item in recommendation_payload["items"])

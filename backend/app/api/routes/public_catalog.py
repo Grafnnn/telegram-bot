@@ -36,9 +36,11 @@ def recommend_fabrics(payload: FabricRecommendRequest, db: Session = Depends(get
         .limit(max(payload.limit * 10, 50))
     )
     candidates = list(db.scalars(stmt).unique())
+    preferred_stock_candidates = [fabric for fabric in candidates if fabric.stock_status in {"in_stock", "preorder"}]
+    recommendation_candidates = preferred_stock_candidates or candidates
     preferences_result = extract_fabric_preferences(payload.user_text)
-    preferences = preferences_result.get("preferences", {"query": payload.user_text})
-    recommendations = build_fabric_recommendations(preferences, candidates, payload.limit)
+    preferences = preferences_result.get("preferences", {})
+    recommendations = build_fabric_recommendations(preferences, recommendation_candidates, payload.limit)
     return {
         "preferences": preferences,
         "items": recommendations,
