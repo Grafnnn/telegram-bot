@@ -59,7 +59,7 @@ jobs:
       TELEGRAM_BOT_TOKEN: put_token_here
       BOT_BACKEND_API_URL: http://backend:8000/api
       OPENAI_API_KEY: put_openai_key_here
-      UPLOAD_DIR: /tmp/fashion-fabric-bot/uploads
+      UPLOAD_DIR: /tmp/fashion-bot-uploads
       MAX_UPLOAD_SIZE_MB: 10
       INITIAL_ADMIN_EMAIL: admin@example.com
       INITIAL_ADMIN_PASSWORD: admin12345
@@ -90,6 +90,10 @@ jobs:
       - name: Run Alembic migrations
         working-directory: backend
         run: alembic upgrade head
+
+      - name: Run backend API tests
+        working-directory: backend
+        run: pytest -q
 
   frontend:
     name: Admin frontend

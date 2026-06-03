@@ -192,10 +192,29 @@ curl -X POST http://localhost:8000/api/admin/fabrics \
 
 Workflow также запускается автоматически на `pull_request` и на `push` в `main`.
 
+## Автоматические тесты
+
+GitHub Actions в job `Backend` поднимает PostgreSQL service container, устанавливает зависимости backend, применяет Alembic migrations и запускает backend API tests командой:
+
+```bash
+cd backend
+pytest -q
+```
+
+Тесты проверяют основной сценарий админки тканей: login initial admin, создание ткани, проверку карточки, загрузку `main` и `texture` изображений, публикацию и появление ткани в public catalog.
+
+Для локального запуска нужен доступный PostgreSQL и переменная `DATABASE_URL`, например `postgresql+psycopg://postgres:postgres@localhost:5432/fashion_bot`. Перед тестами примените миграции:
+
+```bash
+cd backend
+alembic upgrade head
+pytest -q
+```
+
 ## Следующие шаги разработки
 
 1. Подключить реальные OpenAI image/text workflows.
 2. Улучшить UX замены уже загруженных изображений ткани и фасонов.
 3. Расширить Telegram-сценарии выбора ткани, фасона и пользовательского фото.
-4. Добавить тесты API и frontend components.
+4. Расширить покрытие API и добавить frontend component tests.
 5. Подготовить production frontend build и reverse proxy.
