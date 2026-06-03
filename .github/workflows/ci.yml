@@ -8,6 +8,25 @@ on:
   workflow_dispatch:
 
 jobs:
+  whitespace:
+    name: Whitespace check
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check whitespace
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git fetch origin "${{ github.base_ref }}"
+            git diff --check "origin/${{ github.base_ref }}...HEAD"
+          else
+            git diff --check HEAD~1..HEAD || git diff --check
+          fi
+
   backend:
     name: Backend
     runs-on: ubuntu-latest
