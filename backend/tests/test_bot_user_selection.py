@@ -11,6 +11,7 @@ from app.models.fabric import Fabric
 from app.models.telegram_user import TelegramUser
 
 BOT_HEADERS = {"X-Bot-Token": "test_bot_internal_token"}
+WRONG_BOT_HEADERS = {"X-Bot-Token": "wrong"}
 
 
 def _create_fabric(status: str, sku_prefix: str) -> str:
@@ -33,6 +34,16 @@ def _create_fabric(status: str, sku_prefix: str) -> str:
 def test_bot_user_routes_require_internal_token(client: TestClient) -> None:
     telegram_id = 750_000_000 + uuid4().int % 1_000_000
     response = client.post("/api/bot/users/upsert", json={"telegram_id": telegram_id})
+    assert response.status_code == 401, response.text
+
+
+def test_bot_user_routes_reject_invalid_internal_token(client: TestClient) -> None:
+    telegram_id = 760_000_000 + uuid4().int % 1_000_000
+    response = client.post(
+        "/api/bot/users/upsert",
+        headers=WRONG_BOT_HEADERS,
+        json={"telegram_id": telegram_id},
+    )
     assert response.status_code == 401, response.text
 
 

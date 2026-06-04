@@ -15,6 +15,7 @@ from app.models.generation import Generation
 from app.models.telegram_user import TelegramUser
 
 BOT_HEADERS = {"X-Bot-Token": "test_bot_internal_token"}
+WRONG_BOT_HEADERS = {"X-Bot-Token": "wrong"}
 
 PNG_1X1 = (
     b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
@@ -90,6 +91,16 @@ def _create_style(with_base: bool = True, with_mask: bool = False, status: str =
 def test_catalog_style_generation_requires_internal_token(client: TestClient) -> None:
     telegram_id = _create_user()
     response = client.post("/api/generations/catalog-style", json={"telegram_id": telegram_id})
+    assert response.status_code == 401, response.text
+
+
+def test_catalog_style_generation_rejects_invalid_internal_token(client: TestClient) -> None:
+    telegram_id = _create_user()
+    response = client.post(
+        "/api/generations/catalog-style",
+        headers=WRONG_BOT_HEADERS,
+        json={"telegram_id": telegram_id},
+    )
     assert response.status_code == 401, response.text
 
 
