@@ -9,6 +9,8 @@ from fastapi.testclient import TestClient
 from app.database import SessionLocal
 from app.models.garment_style import GarmentStyle
 
+BOT_HEADERS = {"X-Bot-Token": "test_bot_internal_token"}
+
 PNG_1X1 = (
     b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
     b"\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
@@ -91,7 +93,11 @@ def test_admin_can_create_upload_publish_garment_style_and_see_it_in_public_cata
 
 def test_bot_user_can_select_only_published_garment_style(client: TestClient) -> None:
     telegram_id = 700_000_000 + uuid4().int % 1_000_000
-    upsert_response = client.post("/api/bot/users/upsert", json={"telegram_id": telegram_id, "username": "style_user"})
+    upsert_response = client.post(
+        "/api/bot/users/upsert",
+        headers=BOT_HEADERS,
+        json={"telegram_id": telegram_id, "username": "style_user"},
+    )
     assert upsert_response.status_code == 200, upsert_response.text
     assert upsert_response.json()["selected_garment_style_id"] is None
 
@@ -101,22 +107,34 @@ def test_bot_user_can_select_only_published_garment_style(client: TestClient) ->
     archived_id = _create_style("archived", "ARCHIVED")
     missing_id = str(uuid4())
 
-    select_response = client.post(f"/api/bot/users/{telegram_id}/selected-garment-style", json={"garment_style_id": published_id})
+    select_response = client.post(
+        f"/api/bot/users/{telegram_id}/selected-garment-style",
+        headers=BOT_HEADERS,
+        json={"garment_style_id": published_id},
+    )
     assert select_response.status_code == 200, select_response.text
     assert select_response.json()["selected_garment_style_id"] == published_id
 
-    selected_response = client.get(f"/api/bot/users/{telegram_id}/selected-garment-style")
+    selected_response = client.get(f"/api/bot/users/{telegram_id}/selected-garment-style", headers=BOT_HEADERS)
     assert selected_response.status_code == 200, selected_response.text
     selected_payload = selected_response.json()
     assert selected_payload["garment_style"]["id"] == published_id
 
-    selection_response = client.get(f"/api/bot/users/{telegram_id}/selection")
+    selection_response = client.get(f"/api/bot/users/{telegram_id}/selection", headers=BOT_HEADERS)
     assert selection_response.status_code == 200, selection_response.text
     assert selection_response.json()["garment_style"]["id"] == published_id
 
     for style_id in [draft_id, hidden_id, archived_id]:
-        forbidden_response = client.post(f"/api/bot/users/{telegram_id}/selected-garment-style", json={"garment_style_id": style_id})
+        forbidden_response = client.post(
+            f"/api/bot/users/{telegram_id}/selected-garment-style",
+            headers=BOT_HEADERS,
+            json={"garment_style_id": style_id},
+        )
         assert forbidden_response.status_code == 403, forbidden_response.text
 
-    missing_response = client.post(f"/api/bot/users/{telegram_id}/selected-garment-style", json={"garment_style_id": missing_id})
+    missing_response = client.post(
+        f"/api/bot/users/{telegram_id}/selected-garment-style",
+        headers=BOT_HEADERS,
+        json={"garment_style_id": missing_id},
+    )
     assert missing_response.status_code == 404, missing_response.text
