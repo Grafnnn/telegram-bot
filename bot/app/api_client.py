@@ -6,18 +6,26 @@ from typing import Any
 
 import aiohttp
 
+from app.config import get_settings
+
 logger = logging.getLogger(__name__)
 
 
 class BackendAPIClient:
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, bot_internal_token: str | None = None) -> None:
         self.base_url = base_url.rstrip("/")
+        self.bot_internal_token = (
+            bot_internal_token if bot_internal_token is not None else get_settings().bot_internal_token
+        )
 
     async def _request(self, method: str, path: str, **kwargs) -> Any:
         url = f"{self.base_url}{path}"
+        headers = kwargs.pop("headers", {}) or {}
+        if self.bot_internal_token:
+            headers = {**headers, "X-Bot-Token": self.bot_internal_token}
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-                async with session.request(method, url, **kwargs) as response:
+                async with session.request(method, url, headers=headers, **kwargs) as response:
                     if response.status >= 400:
                         text = await response.text()
                         logger.error("Backend error %s %s: %s", response.status, url, text)
