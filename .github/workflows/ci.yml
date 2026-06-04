@@ -34,19 +34,20 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_DB: fashion_bot
+          POSTGRES_DB: fashion_bot_test
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d fashion_bot"
+          --health-cmd "pg_isready -U postgres -d fashion_bot_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
     env:
-      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/fashion_bot
-      POSTGRES_DB: fashion_bot
+      TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/fashion_bot_test
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/fashion_bot_test
+      POSTGRES_DB: fashion_bot_test
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       BACKEND_HOST: 0.0.0.0

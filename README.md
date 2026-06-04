@@ -235,7 +235,7 @@ Workflow также запускается автоматически на `pull
 
 ## Автоматические тесты
 
-GitHub Actions в job `Backend` поднимает PostgreSQL service container, устанавливает зависимости backend, применяет Alembic migrations и запускает backend API tests командой:
+GitHub Actions в job `Backend` поднимает PostgreSQL service container с базой `fashion_bot_test`, устанавливает зависимости backend, применяет Alembic migrations и запускает backend API tests командой:
 
 ```bash
 cd backend
@@ -244,13 +244,15 @@ pytest -q
 
 Тесты проверяют основной сценарий админки тканей: login initial admin, создание ткани, проверку карточки, загрузку `main` и `texture` изображений, публикацию и появление ткани в public catalog.
 
-Для локального запуска нужен доступный PostgreSQL и переменная `DATABASE_URL`, например `postgresql+psycopg://postgres:postgres@localhost:5432/fashion_bot`. Перед тестами примените миграции:
+Для локального запуска нужен доступный PostgreSQL и отдельная тестовая база. Тесты используют `TEST_DATABASE_URL` и откажутся запускаться, если имя базы не содержит `test`.
 
 ```bash
 cd backend
-alembic upgrade head
+export TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/fashion_bot_test
 pytest -q
 ```
+
+Pytest применяет Alembic migrations к тестовой базе перед запуском и очищает таблицы между тестами.
 
 ## Следующие шаги разработки
 
