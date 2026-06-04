@@ -20,6 +20,7 @@ os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 os.environ.setdefault("UPLOAD_DIR", "/tmp/fashion-bot-uploads")
 os.environ.setdefault("OPENAI_API_KEY", "put_openai_key_here")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "put_token_here")
+os.environ.setdefault("BOT_INTERNAL_TOKEN", "test_bot_internal_token")
 os.environ.setdefault("INITIAL_ADMIN_EMAIL", "admin@example.com")
 os.environ.setdefault("INITIAL_ADMIN_PASSWORD", "admin12345")
 os.environ.setdefault("SEED_DEMO_DATA", "false")
