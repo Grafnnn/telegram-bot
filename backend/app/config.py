@@ -8,6 +8,7 @@ from typing import Any
 
 OPENAI_API_KEY_PLACEHOLDER = "put_openai_key_here"
 TELEGRAM_BOT_TOKEN_PLACEHOLDER = "put_token_here"
+BOT_INTERNAL_TOKEN_PLACEHOLDER = "change_me_bot_internal_token"
 
 
 class MissingOpenAIKeyError(RuntimeError):
@@ -70,6 +71,7 @@ class Settings:
 
     telegram_bot_token: str = TELEGRAM_BOT_TOKEN_PLACEHOLDER
     bot_backend_api_url: str = "http://backend:8000/api"
+    bot_internal_token: str = BOT_INTERNAL_TOKEN_PLACEHOLDER
 
     openai_api_key: str = OPENAI_API_KEY_PLACEHOLDER
 
@@ -102,6 +104,7 @@ class Settings:
             ),
             "telegram_bot_token": _get_value("TELEGRAM_BOT_TOKEN", cls.telegram_bot_token, env_file),
             "bot_backend_api_url": _get_value("BOT_BACKEND_API_URL", cls.bot_backend_api_url, env_file),
+            "bot_internal_token": _get_value("BOT_INTERNAL_TOKEN", cls.bot_internal_token, env_file),
             "openai_api_key": _get_value("OPENAI_API_KEY", cls.openai_api_key, env_file),
             "upload_dir": Path(_get_value("UPLOAD_DIR", str(cls.upload_dir), env_file)),
             "max_upload_size_mb": _get_int("MAX_UPLOAD_SIZE_MB", cls.max_upload_size_mb, env_file),
@@ -128,6 +131,12 @@ class Settings:
         """Return whether the Telegram bot token was replaced with a real value."""
 
         return bool(self.telegram_bot_token and self.telegram_bot_token != TELEGRAM_BOT_TOKEN_PLACEHOLDER)
+
+    @property
+    def is_bot_internal_token_configured(self) -> bool:
+        """Return whether bot-to-backend API access has a real shared token."""
+
+        return bool(self.bot_internal_token and self.bot_internal_token != BOT_INTERNAL_TOKEN_PLACEHOLDER)
 
     def require_openai_api_key(self) -> str:
         """Return the OpenAI key or raise a clear AI-feature error."""
