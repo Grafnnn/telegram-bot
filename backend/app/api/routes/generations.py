@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.api.deps import verify_bot_internal_token
 from app.config import get_settings
 from app.database import get_db
 from app.models import Fabric, GarmentStyle, Generation, TelegramUser
@@ -71,7 +72,12 @@ def _build_catalog_style_prompt(fabric: Fabric, style: GarmentStyle) -> str:
     return "\n".join(details)
 
 
-@router.post("/catalog-style", response_model=GenerationRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/catalog-style",
+    response_model=GenerationRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(verify_bot_internal_token)],
+)
 def create_catalog_style_generation(payload: CatalogStyleGenerationRequest, db: Session = Depends(get_db)) -> Generation:
     user = _telegram_user_or_404(db, payload.telegram_id)
     fabric = _selected_published_fabric(db, user)
@@ -111,7 +117,12 @@ def create_catalog_style_generation(payload: CatalogStyleGenerationRequest, db: 
     return generation
 
 
-@router.post("/user-photo", response_model=GenerationRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/user-photo",
+    response_model=GenerationRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(verify_bot_internal_token)],
+)
 async def create_user_photo_generation(telegram_user_id: UUID | None = Form(None), fabric_id: UUID = Form(...), photo: UploadFile = File(...), db: Session = Depends(get_db)) -> Generation:
     if db.get(Fabric, fabric_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Ткань не найдена")
