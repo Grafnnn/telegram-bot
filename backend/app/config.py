@@ -50,6 +50,13 @@ def _get_bool(name: str, default: bool, env_file: dict[str, str]) -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
+def _get_optional_int(name: str, default: int | None, env_file: dict[str, str]) -> int | None:
+    """Return an optional integer environment value."""
+
+    value = _get_value(name, "" if default is None else str(default), env_file).strip()
+    return int(value) if value else None
+
+
 @dataclass(frozen=True)
 class Settings:
     """Runtime settings sourced from `.env` or process environment."""
@@ -77,6 +84,7 @@ class Settings:
 
     upload_dir: Path = Path("/app/uploads")
     max_upload_size_mb: int = 10
+    max_upload_bytes: int | None = None
 
     initial_admin_email: str = "admin@example.com"
     initial_admin_password: str = "admin12345"
@@ -108,6 +116,7 @@ class Settings:
             "openai_api_key": _get_value("OPENAI_API_KEY", cls.openai_api_key, env_file),
             "upload_dir": Path(_get_value("UPLOAD_DIR", str(cls.upload_dir), env_file)),
             "max_upload_size_mb": _get_int("MAX_UPLOAD_SIZE_MB", cls.max_upload_size_mb, env_file),
+            "max_upload_bytes": _get_optional_int("MAX_UPLOAD_BYTES", cls.max_upload_bytes, env_file),
             "initial_admin_email": _get_value("INITIAL_ADMIN_EMAIL", cls.initial_admin_email, env_file),
             "initial_admin_password": _get_value("INITIAL_ADMIN_PASSWORD", cls.initial_admin_password, env_file),
             "seed_demo_data": _get_bool("SEED_DEMO_DATA", cls.seed_demo_data, env_file),
@@ -118,6 +127,8 @@ class Settings:
     def max_upload_size_bytes(self) -> int:
         """Configured maximum upload size in bytes."""
 
+        if self.max_upload_bytes is not None and self.max_upload_bytes > 0:
+            return self.max_upload_bytes
         return self.max_upload_size_mb * 1024 * 1024
 
     @property

@@ -106,7 +106,11 @@ def test_catalog_style_generation_rejects_invalid_internal_token(client: TestCli
 
 def test_catalog_style_generation_requires_selected_fabric(client: TestClient) -> None:
     telegram_id = _create_user()
-    response = client.post("/api/generations/catalog-style", headers=BOT_HEADERS, json={"telegram_id": telegram_id})
+    response = client.post(
+        "/api/generations/catalog-style",
+        headers=BOT_HEADERS,
+        json={"telegram_id": telegram_id},
+    )
     assert response.status_code == 400, response.text
     assert "ткань" in response.json()["detail"].lower()
 
@@ -149,6 +153,34 @@ def test_catalog_style_generation_without_openai_key_creates_failed_generation(c
     assert payload["mode"] == "catalog_style"
     assert payload["fabric_id"] == str(fabric_id)
     assert payload["garment_style_id"] == str(style_id)
+
+
+def test_catalog_style_generation_provider_error_is_normalized(client: TestClient, monkeypatch) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    style_id = _create_style(with_mask=True)
+    telegram_id = _create_user(selected_fabric_id=fabric_id, selected_garment_style_id=style_id)
+
+    def fake_generate(
+        base_image_path: str,
+        fabric_texture_path: str,
+        mask_image_path: str | None,
+        prompt: str,
+    ) -> bytes:
+        raise RuntimeError("provider traceback with implementation details")
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_catalog_style", fake_generate)
+    response = client.post(
+        "/api/generations/catalog-style",
+        headers=BOT_HEADERS,
+        json={"telegram_id": telegram_id},
+    )
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["status"] == "failed"
+    assert payload["error_message"] == generation_routes.IMAGE_ERROR
+    assert "traceback" not in payload["error_message"].lower()
 
 
 def test_catalog_style_generation_saves_mocked_result(client: TestClient, monkeypatch) -> None:
