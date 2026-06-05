@@ -24,7 +24,9 @@ def get_current_admin(token: str = Depends(oauth2_scheme), db: Session = Depends
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Недействительный токен") from exc
     admin = db.get(Admin, admin_id)
     if admin is None or not admin.is_active:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Администратор не найден")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Недействительный токен")
+    if admin.role != "admin":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав")
     return admin
 
 

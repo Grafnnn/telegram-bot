@@ -2,8 +2,8 @@ import { FormEvent, useState } from 'react';
 import { login } from '../api/auth';
 
 export default function LoginPage({ navigate }: { navigate: (path: string) => void }) {
-  const [email, setEmail] = useState('admin@example.com');
-  const [password, setPassword] = useState('admin12345');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   async function submit(event: FormEvent) { event.preventDefault(); setLoading(true); setError(''); try { await login(email, password); navigate('/'); } catch (err) { setError(err instanceof Error ? err.message : 'Ошибка входа'); } finally { setLoading(false); } }

@@ -16,6 +16,7 @@ from app.services.seed_service import seed_demo_data, seed_initial_admin
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    settings.validate_admin_auth_config()
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
     for folder in ["fabrics", "garment-styles", "generations", "user-photos"]:
         (settings.upload_dir / folder).mkdir(parents=True, exist_ok=True)
