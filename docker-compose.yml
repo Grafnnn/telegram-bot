@@ -27,6 +27,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change_me}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
+      BOT_INTERNAL_TOKEN: ${BOT_INTERNAL_TOKEN:-change_me_bot_internal_token}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-put_openai_key_here}
       UPLOAD_DIR: ${UPLOAD_DIR:-/app/uploads}
       MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-10}
@@ -49,6 +50,7 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-put_token_here}
       BOT_BACKEND_API_URL: ${BOT_BACKEND_API_URL:-http://backend:8000/api}
       BACKEND_PUBLIC_URL: ${BACKEND_PUBLIC_URL:-http://localhost:8000}
+      BOT_INTERNAL_TOKEN: ${BOT_INTERNAL_TOKEN:-change_me_bot_internal_token}
     depends_on:
       - backend
 

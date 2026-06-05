@@ -14,6 +14,9 @@ from app.models.garment_style import GarmentStyle
 from app.models.generation import Generation
 from app.models.telegram_user import TelegramUser
 
+BOT_HEADERS = {"X-Bot-Token": "test_bot_internal_token"}
+WRONG_BOT_HEADERS = {"X-Bot-Token": "wrong"}
+
 PNG_1X1 = (
     b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
     b"\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
@@ -85,9 +88,25 @@ def _create_style(with_base: bool = True, with_mask: bool = False, status: str =
         return style.id
 
 
-def test_catalog_style_generation_requires_selected_fabric(client: TestClient) -> None:
+def test_catalog_style_generation_requires_internal_token(client: TestClient) -> None:
     telegram_id = _create_user()
     response = client.post("/api/generations/catalog-style", json={"telegram_id": telegram_id})
+    assert response.status_code == 401, response.text
+
+
+def test_catalog_style_generation_rejects_invalid_internal_token(client: TestClient) -> None:
+    telegram_id = _create_user()
+    response = client.post(
+        "/api/generations/catalog-style",
+        headers=WRONG_BOT_HEADERS,
+        json={"telegram_id": telegram_id},
+    )
+    assert response.status_code == 401, response.text
+
+
+def test_catalog_style_generation_requires_selected_fabric(client: TestClient) -> None:
+    telegram_id = _create_user()
+    response = client.post("/api/generations/catalog-style", headers=BOT_HEADERS, json={"telegram_id": telegram_id})
     assert response.status_code == 400, response.text
     assert "ткань" in response.json()["detail"].lower()
 
@@ -95,7 +114,7 @@ def test_catalog_style_generation_requires_selected_fabric(client: TestClient) -
 def test_catalog_style_generation_requires_selected_style(client: TestClient) -> None:
     fabric_id = _create_fabric()
     telegram_id = _create_user(selected_fabric_id=fabric_id)
-    response = client.post("/api/generations/catalog-style", json={"telegram_id": telegram_id})
+    response = client.post("/api/generations/catalog-style", headers=BOT_HEADERS, json={"telegram_id": telegram_id})
     assert response.status_code == 400, response.text
     assert "фасон" in response.json()["detail"].lower()
 
@@ -104,7 +123,7 @@ def test_catalog_style_generation_requires_texture_image(client: TestClient) -> 
     fabric_id = _create_fabric(with_texture=False)
     style_id = _create_style()
     telegram_id = _create_user(selected_fabric_id=fabric_id, selected_garment_style_id=style_id)
-    response = client.post("/api/generations/catalog-style", json={"telegram_id": telegram_id})
+    response = client.post("/api/generations/catalog-style", headers=BOT_HEADERS, json={"telegram_id": telegram_id})
     assert response.status_code == 400, response.text
     assert "texture image" in response.json()["detail"]
 
@@ -113,7 +132,7 @@ def test_catalog_style_generation_requires_style_base_image(client: TestClient) 
     fabric_id = _create_fabric()
     style_id = _create_style(with_base=False)
     telegram_id = _create_user(selected_fabric_id=fabric_id, selected_garment_style_id=style_id)
-    response = client.post("/api/generations/catalog-style", json={"telegram_id": telegram_id})
+    response = client.post("/api/generations/catalog-style", headers=BOT_HEADERS, json={"telegram_id": telegram_id})
     assert response.status_code == 400, response.text
     assert "base image" in response.json()["detail"]
 
@@ -122,7 +141,7 @@ def test_catalog_style_generation_without_openai_key_creates_failed_generation(c
     fabric_id = _create_fabric()
     style_id = _create_style(with_mask=True)
     telegram_id = _create_user(selected_fabric_id=fabric_id, selected_garment_style_id=style_id)
-    response = client.post("/api/generations/catalog-style", json={"telegram_id": telegram_id})
+    response = client.post("/api/generations/catalog-style", headers=BOT_HEADERS, json={"telegram_id": telegram_id})
     assert response.status_code == 201, response.text
     payload = response.json()
     assert payload["status"] == "failed"
@@ -147,7 +166,7 @@ def test_catalog_style_generation_saves_mocked_result(client: TestClient, monkey
         return PNG_1X1
 
     monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_catalog_style", fake_generate)
-    response = client.post("/api/generations/catalog-style", json={"telegram_id": telegram_id})
+    response = client.post("/api/generations/catalog-style", headers=BOT_HEADERS, json={"telegram_id": telegram_id})
     assert response.status_code == 201, response.text
     payload = response.json()
     assert payload["status"] == "completed"
