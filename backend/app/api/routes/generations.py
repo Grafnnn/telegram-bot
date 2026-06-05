@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import verify_bot_internal_token
-from app.config import get_settings
+from app.config import MissingOpenAIKeyError, get_settings
 from app.database import get_db
 from app.models import Fabric, GarmentStyle, Generation, TelegramUser
 from app.schemas.generation import CatalogStyleGenerationRequest, GenerationRead
@@ -72,6 +72,12 @@ def _build_catalog_style_prompt(fabric: Fabric, style: GarmentStyle) -> str:
     return "\n".join(details)
 
 
+def _safe_generation_error(exc: Exception) -> str:
+    if isinstance(exc, MissingOpenAIKeyError):
+        return str(exc)
+    return IMAGE_ERROR
+
+
 @router.post(
     "/catalog-style",
     response_model=GenerationRead,
@@ -111,7 +117,7 @@ def create_catalog_style_generation(payload: CatalogStyleGenerationRequest, db: 
         generation.error_message = None
     except Exception as exc:
         generation.status = "failed"
-        generation.error_message = str(exc) or IMAGE_ERROR
+        generation.error_message = _safe_generation_error(exc)
     db.commit()
     db.refresh(generation)
     return generation

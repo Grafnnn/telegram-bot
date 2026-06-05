@@ -1,5 +1,6 @@
 """File storage service for uploaded and generated images."""
 
+from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
@@ -7,14 +8,39 @@ from fastapi import HTTPException, UploadFile, status
 
 from app.config import get_settings
 
-ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
+ALLOWED_IMAGE_MIME_TYPES = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+}
+ALLOWED_EXTENSIONS = set(ALLOWED_IMAGE_MIME_TYPES.values()) | {"jpeg"}
 ALLOWED_FOLDERS = {"fabrics", "garment-styles", "generations", "user-photos"}
+IMAGE_SIGNATURES: dict[str, Callable[[bytes], bool]] = {
+    "image/jpeg": lambda content: content.startswith(b"\xff\xd8\xff"),
+    "image/png": lambda content: content.startswith(b"\x89PNG\r\n\x1a\n"),
+    "image/webp": lambda content: len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP",
+}
 
 
 def _safe_extension(filename: str) -> str:
     ext = Path(filename).suffix.lower().lstrip(".")
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Разрешены только jpg, jpeg, png и webp файлы.")
+    return ext
+
+
+def _validate_upload_content(file: UploadFile, content: bytes) -> str:
+    if not content:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Файл пустой.")
+    content_type = (file.content_type or "").lower()
+    ext = ALLOWED_IMAGE_MIME_TYPES.get(content_type)
+    if ext is None:
+        raise HTTPException(
+            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            "Разрешены только JPEG, PNG и WebP изображения.",
+        )
+    if not IMAGE_SIGNATURES[content_type](content):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Файл не похож на корректное изображение.")
     return ext
 
 
@@ -37,11 +63,12 @@ async def save_upload(file: UploadFile, folder: str) -> str:
     if folder not in ALLOWED_FOLDERS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Недопустимая папка загрузки.")
     settings = get_settings()
-    ext = _safe_extension(file.filename or "upload")
     content = await file.read()
     max_size = settings.max_upload_size_bytes
     if len(content) > max_size:
-        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, f"Файл больше {settings.max_upload_size_mb} МБ.")
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, f"Файл больше {max_size} байт.")
+    _safe_extension(file.filename or "upload")
+    ext = _validate_upload_content(file, content)
     target_dir = settings.upload_dir / folder
     target_dir.mkdir(parents=True, exist_ok=True)
     filename = f"{uuid4().hex}.{ext}"
