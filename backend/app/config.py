@@ -9,10 +9,17 @@ from typing import Any
 OPENAI_API_KEY_PLACEHOLDER = "put_openai_key_here"
 TELEGRAM_BOT_TOKEN_PLACEHOLDER = "put_token_here"
 BOT_INTERNAL_TOKEN_PLACEHOLDER = "change_me_bot_internal_token"
+JWT_SECRET_PLACEHOLDER = "change_me"
+INITIAL_ADMIN_PASSWORD_PLACEHOLDER = "admin12345"
+PRODUCTION_LIKE_ENVS = {"production", "prod", "staging"}
 
 
 class MissingOpenAIKeyError(RuntimeError):
     """Raised when an AI feature is called without a configured OpenAI key."""
+
+
+class InsecureAdminAuthConfigError(RuntimeError):
+    """Raised when admin auth settings are unsafe for production-like runtime."""
 
 
 def _read_env_file(path: Path = Path(".env")) -> dict[str, str]:
@@ -61,6 +68,8 @@ def _get_optional_int(name: str, default: int | None, env_file: dict[str, str]) 
 class Settings:
     """Runtime settings sourced from `.env` or process environment."""
 
+    app_env: str = "development"
+
     database_url: str = "postgresql+psycopg://postgres:postgres@db:5432/fashion_bot"
     postgres_db: str = "fashion_bot"
     postgres_user: str = "postgres"
@@ -72,7 +81,7 @@ class Settings:
 
     admin_frontend_url: str = "http://localhost:5173"
 
-    jwt_secret: str = "change_me"
+    jwt_secret: str = JWT_SECRET_PLACEHOLDER
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440
 
@@ -87,7 +96,7 @@ class Settings:
     max_upload_bytes: int | None = None
 
     initial_admin_email: str = "admin@example.com"
-    initial_admin_password: str = "admin12345"
+    initial_admin_password: str = INITIAL_ADMIN_PASSWORD_PLACEHOLDER
 
     seed_demo_data: bool = False
 
@@ -97,6 +106,7 @@ class Settings:
 
         env_file = _read_env_file(env_file_path)
         values: dict[str, Any] = {
+            "app_env": _get_value("APP_ENV", cls.app_env, env_file),
             "database_url": _get_value("DATABASE_URL", cls.database_url, env_file),
             "postgres_db": _get_value("POSTGRES_DB", cls.postgres_db, env_file),
             "postgres_user": _get_value("POSTGRES_USER", cls.postgres_user, env_file),
@@ -148,6 +158,24 @@ class Settings:
         """Return whether bot-to-backend API access has a real shared token."""
 
         return bool(self.bot_internal_token and self.bot_internal_token != BOT_INTERNAL_TOKEN_PLACEHOLDER)
+
+    @property
+    def is_production_like(self) -> bool:
+        """Return whether runtime should reject development placeholders."""
+
+        return self.app_env.strip().lower() in PRODUCTION_LIKE_ENVS
+
+    def validate_admin_auth_config(self) -> None:
+        """Reject insecure admin auth settings for production-like runtime."""
+
+        if not self.is_production_like:
+            return
+        if not self.jwt_secret or self.jwt_secret == JWT_SECRET_PLACEHOLDER:
+            raise InsecureAdminAuthConfigError("JWT_SECRET must be set for production-like admin auth.")
+        if not self.initial_admin_password or self.initial_admin_password == INITIAL_ADMIN_PASSWORD_PLACEHOLDER:
+            raise InsecureAdminAuthConfigError(
+                "INITIAL_ADMIN_PASSWORD must be set for production-like admin auth."
+            )
 
     def require_openai_api_key(self) -> str:
         """Return the OpenAI key or raise a clear AI-feature error."""

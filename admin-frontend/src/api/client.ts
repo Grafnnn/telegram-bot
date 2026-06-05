@@ -41,6 +41,7 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
   if (token) headers.set('Authorization', `Bearer ${token}`);
   const response = await fetch(`${API_URL}${path}`, { ...options, headers });
   if (response.status === 401) { logout(); throw new Error('Сессия истекла. Войдите заново.'); }
+  if (response.status === 403) { throw new Error('Недостаточно прав для выполнения действия.'); }
   if (!response.ok) {
     const contentType = response.headers.get('content-type') ?? '';
     const payload = contentType.includes('application/json') ? await response.json() : await response.text();
