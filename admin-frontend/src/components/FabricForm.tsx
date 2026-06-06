@@ -18,6 +18,15 @@ import {
 import ImageUploader from './ImageUploader';
 import StatusBadge from './StatusBadge';
 import { generateFabricDescription } from '../api/fabrics';
+import {
+  ensureStockStatus,
+  optionalNonNegativeNumber,
+  optionalTrimmed,
+  requiredNonNegativeNumber,
+  requiredTrimmed,
+  splitCsv,
+  STOCK_STATUS_VALUES,
+} from '../utils/formValidation';
 
 type FabricFormMode = 'create' | 'edit';
 type ImageType = 'main' | 'texture' | 'extra';
@@ -98,18 +107,6 @@ function toCsv(value?: string[] | null): string {
   return value?.join(', ') ?? '';
 }
 
-function toNumber(value: string): number | null {
-  const normalized = value.trim().replace(',', '.');
-  if (!normalized) return null;
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function toArray(value: string): string[] | null {
-  const items = value.split(',').map((item) => item.trim()).filter(Boolean);
-  return items.length > 0 ? items : null;
-}
-
 function fromFabric(fabric?: Fabric): FormState {
   if (!fabric) return emptyState;
   return {
@@ -141,29 +138,29 @@ function fromFabric(fabric?: Fabric): FormState {
 
 function payloadFromState(state: FormState, status?: 'draft'): FabricPayload {
   return {
-    name: state.name.trim(),
-    sku: state.sku.trim(),
-    category: state.category.trim(),
-    short_description: state.short_description.trim() || null,
-    full_description: state.full_description.trim() || null,
-    price_per_meter: toNumber(state.price_per_meter),
+    name: requiredTrimmed(state.name, 'Название ткани'),
+    sku: requiredTrimmed(state.sku, 'Артикул'),
+    category: requiredTrimmed(state.category, 'Категория'),
+    short_description: optionalTrimmed(state.short_description),
+    full_description: optionalTrimmed(state.full_description),
+    price_per_meter: requiredNonNegativeNumber(state.price_per_meter, 'Цена за метр'),
     currency: state.currency.trim() || 'RUB',
-    stock_status: state.stock_status,
-    stock_quantity: toNumber(state.stock_quantity),
-    composition: state.composition.trim() || null,
-    color: state.color.trim() || null,
-    shade: state.shade.trim() || null,
-    pattern: state.pattern.trim() || null,
-    texture: state.texture.trim() || null,
-    density: state.density.trim() || null,
-    stretch: state.stretch.trim() || null,
-    opacity: state.opacity.trim() || null,
-    shine: state.shine.trim() || null,
-    season: toArray(state.season),
-    recommended_for: toArray(state.recommended_for),
-    not_recommended_for: toArray(state.not_recommended_for),
-    tags: toArray(state.tags),
-    description_for_gpt: state.description_for_gpt.trim() || null,
+    stock_status: ensureStockStatus(state.stock_status),
+    stock_quantity: optionalNonNegativeNumber(state.stock_quantity, 'Количество на складе'),
+    composition: optionalTrimmed(state.composition),
+    color: optionalTrimmed(state.color),
+    shade: optionalTrimmed(state.shade),
+    pattern: optionalTrimmed(state.pattern),
+    texture: optionalTrimmed(state.texture),
+    density: optionalTrimmed(state.density),
+    stretch: optionalTrimmed(state.stretch),
+    opacity: optionalTrimmed(state.opacity),
+    shine: optionalTrimmed(state.shine),
+    season: splitCsv(state.season),
+    recommended_for: splitCsv(state.recommended_for),
+    not_recommended_for: splitCsv(state.not_recommended_for),
+    tags: splitCsv(state.tags),
+    description_for_gpt: requiredTrimmed(state.description_for_gpt, 'Описание для GPT'),
     ...(status ? { status } : {}),
   };
 }
@@ -240,13 +237,12 @@ export default function FabricForm({ mode, fabric, onCreated, onUpdated }: Props
   async function saveAndPublish() {
     setLoadingAction('publish');
     setError('');
-    const missingBeforeSave = localMissingFields();
-    if (missingBeforeSave.length > 0) {
-      setError(`Нельзя опубликовать ткань. Не хватает: ${missingBeforeSave.map((field) => FIELD_LABELS[field] ?? field).join(', ')}`);
-      setLoadingAction(null);
-      return;
-    }
     try {
+      const missingBeforeSave = localMissingFields();
+      if (missingBeforeSave.length > 0) {
+        setError(`Нельзя опубликовать ткань. Не хватает: ${missingBeforeSave.map((field) => FIELD_LABELS[field] ?? field).join(', ')}`);
+        return;
+      }
       const saved = await saveDraft(false);
       const published = await publishFabric(saved.id);
       setImages(published.images ?? []);
@@ -293,8 +289,14 @@ export default function FabricForm({ mode, fabric, onCreated, onUpdated }: Props
   }
 
   function localMissingFields(): string[] {
-    const payload = payloadFromState(form);
-    const missing = ['sku', 'name', 'category', 'price_per_meter', 'stock_status', 'description_for_gpt'].filter((field) => !payload[field as keyof FabricPayload]);
+    const missing = [
+      ['sku', form.sku.trim()],
+      ['name', form.name.trim()],
+      ['category', form.category.trim()],
+      ['price_per_meter', form.price_per_meter.trim()],
+      ['stock_status', STOCK_STATUS_VALUES.includes(form.stock_status)],
+      ['description_for_gpt', form.description_for_gpt.trim()],
+    ].filter(([, value]) => !value).map(([field]) => String(field));
     if (!hasMainImage) missing.push('main image');
     if (!hasTextureImage) missing.push('texture image');
     return missing;

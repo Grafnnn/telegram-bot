@@ -125,6 +125,10 @@ jobs:
         working-directory: admin-frontend
         run: npm install
 
+      - name: Run frontend UX tests
+        working-directory: admin-frontend
+        run: npm run test
+
       - name: Build frontend
         working-directory: admin-frontend
         run: npm run build
