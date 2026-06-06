@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -18,6 +19,7 @@ from app.handler_utils import (
     parse_callback_uuid,
 )
 from app.handlers import catalog, fallback, fabric_selection, selected, start
+from app.redaction import REDACTED, redact_mapping, safe_exception_summary, sanitize_log_message
 
 
 SECRET_TOKEN = "secret-token-value"
@@ -197,6 +199,73 @@ def test_api_client_sends_internal_token_and_raises_controlled_errors(monkeypatc
 
     assert friendly_api_error_message(BackendAPIError(422, "/bot/users/1/selected-fabric")) == VALIDATION_MESSAGE
     assert_no_secret_leak(friendly_api_error_message(BackendAPIError(401, "/bot/users/1/selected-fabric")))
+
+
+def test_redaction_masks_bot_headers_and_error_strings() -> None:
+    headers = {
+        "Authorization": "Bearer admin-token",
+        "X-Bot-Token": SECRET_TOKEN,
+        "nested": {"password": "admin-password", "safe": "visible"},
+    }
+    raw_error = (
+        "Traceback Authorization: Bearer admin-token X-Bot-Token=secret-token-value "
+        "password=hunter2 data:image/png;base64,"
+        + "A" * 120
+    )
+
+    redacted_headers = redact_mapping(headers)
+    summary = safe_exception_summary(RuntimeError(raw_error))
+    sanitized = sanitize_log_message(raw_error)
+
+    assert redacted_headers["Authorization"] == REDACTED
+    assert redacted_headers["X-Bot-Token"] == REDACTED
+    assert redacted_headers["nested"]["password"] == REDACTED
+    assert redacted_headers["nested"]["safe"] == "visible"
+    for text in [summary, sanitized]:
+        assert "admin-token" not in text
+        assert SECRET_TOKEN not in text
+        assert "hunter2" not in text
+        assert "data:image/png;base64" not in text
+
+
+def test_api_client_logs_safe_context_without_token_or_personal_ids(monkeypatch, caplog) -> None:
+    class FakeResponse:
+        status = 500
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def json(self):
+            return {"error": "Authorization: Bearer admin-token"}
+
+    class FakeSession:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        def request(self, method, url, headers=None, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr("app.api_client.aiohttp.ClientSession", FakeSession)
+
+    client = BackendAPIClient("http://backend:8000/api", bot_internal_token=SECRET_TOKEN)
+    with caplog.at_level(logging.ERROR, logger="app.api_client"):
+        with pytest.raises(BackendAPIError):
+            run(client.get_selection(123456789))
+
+    assert "Backend error 500" in caplog.text
+    assert SECRET_TOKEN not in caplog.text
+    assert "X-Bot-Token" not in caplog.text
+    assert "123456789" not in caplog.text
+    assert "/bot/users/{id}/selection" in caplog.text
 
 
 @pytest.mark.parametrize(

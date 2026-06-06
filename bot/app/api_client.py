@@ -7,6 +7,7 @@ from typing import Any
 import aiohttp
 
 from app.config import get_settings
+from app.redaction import safe_exception_summary, safe_path_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ class BackendAPIClient:
 
     async def _request(self, method: str, path: str, **kwargs) -> Any:
         url = f"{self.base_url}{path}"
+        safe_path = safe_path_for_log(path)
         headers = kwargs.pop("headers", {}) or {}
         if self.bot_internal_token:
             headers = {**headers, "X-Bot-Token": self.bot_internal_token}
@@ -40,12 +42,12 @@ class BackendAPIClient:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
                 async with session.request(method, url, headers=headers, **kwargs) as response:
                     if response.status >= 400:
-                        logger.error("Backend error %s for %s %s", response.status, method, path)
-                        raise BackendAPIError(response.status, path)
+                        logger.error("Backend error %s for %s %s", response.status, method, safe_path)
+                        raise BackendAPIError(response.status, safe_path)
                     return await response.json()
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            logger.error("Backend is unavailable for %s %s: %s", method, path, exc.__class__.__name__)
-            raise BackendUnavailableError(f"Backend is unavailable for {method} {path}") from exc
+            logger.error("Backend is unavailable for %s %s: %s", method, safe_path, safe_exception_summary(exc))
+            raise BackendUnavailableError(f"Backend is unavailable for {method} {safe_path}") from exc
 
     async def upsert_user(self, telegram_id: int, username: str | None = None, first_name: str | None = None, last_name: str | None = None) -> dict | None:
         return await self._request(

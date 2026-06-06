@@ -1,5 +1,6 @@
 """Generation routes."""
 
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -14,8 +15,10 @@ from app.schemas.generation import CatalogStyleGenerationRequest, GenerationRead
 from app.services import image_generation_service
 from app.services.image_generation_service import IMAGE_ERROR, IMAGE_EDIT_PROMPT
 from app.services.storage_service import resolve_upload_path, save_generated_image, save_upload
+from app.utils.redaction import safe_exception_summary
 
 router = APIRouter(prefix="/generations", tags=["generations"])
+logger = logging.getLogger(__name__)
 
 
 def _generation_or_404(db: Session, generation_id: UUID) -> Generation:
@@ -46,7 +49,7 @@ def _selected_published_style(db: Session, user: TelegramUser) -> GarmentStyle:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Сначала выберите фасон.")
     style = db.get(GarmentStyle, user.selected_garment_style_id)
     if style is None or style.status != "published":
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Выбранный фасон не найден или больше не опубликован.")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Выбранный фасон не найдена или больше не опубликован.")
     return style
 
 
@@ -118,6 +121,11 @@ def create_catalog_style_generation(payload: CatalogStyleGenerationRequest, db: 
     except Exception as exc:
         generation.status = "failed"
         generation.error_message = _safe_generation_error(exc)
+        logger.warning(
+            "Catalog style generation failed generation_id=%s error=%s",
+            generation.id,
+            safe_exception_summary(exc),
+        )
     db.commit()
     db.refresh(generation)
     return generation

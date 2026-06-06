@@ -1,8 +1,11 @@
 """FastAPI application entry point."""
 
 from contextlib import asynccontextmanager
+import logging
+import re
+from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -11,6 +14,15 @@ from app.config import get_settings
 from app.database import SessionLocal
 from app.schemas.common import HealthResponse
 from app.services.seed_service import seed_demo_data, seed_initial_admin
+from app.utils.redaction import safe_exception_summary, safe_path_for_log
+
+logger = logging.getLogger(__name__)
+REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def _request_id_from_header(value: str | None) -> str:
+    candidate = (value or "").strip()
+    return candidate if REQUEST_ID_RE.fullmatch(candidate) else uuid4().hex
 
 
 @asynccontextmanager
@@ -44,6 +56,24 @@ app.include_router(public_catalog.router, prefix="/api")
 app.include_router(bot_users.router, prefix="/api")
 app.include_router(generations.router, prefix="/api")
 app.include_router(uploads.router, prefix="/api")
+
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    request_id = _request_id_from_header(request.headers.get("X-Request-ID"))
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        logger.error(
+            "Unhandled request error request_id=%s method=%s path=%s error=%s",
+            request_id,
+            request.method,
+            safe_path_for_log(request.url.path),
+            safe_exception_summary(exc),
+        )
+        raise
+    response.headers["X-Request-ID"] = request_id
+    return response
 
 
 @app.get("/api/health", response_model=HealthResponse, tags=["system"])

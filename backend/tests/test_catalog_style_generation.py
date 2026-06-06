@@ -155,7 +155,7 @@ def test_catalog_style_generation_without_openai_key_creates_failed_generation(c
     assert payload["garment_style_id"] == str(style_id)
 
 
-def test_catalog_style_generation_provider_error_is_normalized(client: TestClient, monkeypatch) -> None:
+def test_catalog_style_generation_provider_error_is_normalized(client: TestClient, monkeypatch, caplog) -> None:
     from app.api.routes import generations as generation_routes
 
     fabric_id = _create_fabric()
@@ -168,19 +168,27 @@ def test_catalog_style_generation_provider_error_is_normalized(client: TestClien
         mask_image_path: str | None,
         prompt: str,
     ) -> bytes:
-        raise RuntimeError("provider traceback with implementation details")
+        raise RuntimeError(
+            "provider traceback Authorization: Bearer provider-token password=hunter2 data:image/png;base64,"
+            + "A" * 120
+        )
 
     monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_catalog_style", fake_generate)
-    response = client.post(
-        "/api/generations/catalog-style",
-        headers=BOT_HEADERS,
-        json={"telegram_id": telegram_id},
-    )
+    with caplog.at_level("WARNING", logger="app.api.routes.generations"):
+        response = client.post(
+            "/api/generations/catalog-style",
+            headers=BOT_HEADERS,
+            json={"telegram_id": telegram_id},
+        )
     assert response.status_code == 201, response.text
     payload = response.json()
     assert payload["status"] == "failed"
     assert payload["error_message"] == generation_routes.IMAGE_ERROR
     assert "traceback" not in payload["error_message"].lower()
+    assert "RuntimeError" in caplog.text
+    assert "provider-token" not in caplog.text
+    assert "hunter2" not in caplog.text
+    assert "data:image/png;base64" not in caplog.text
 
 
 def test_catalog_style_generation_saves_mocked_result(client: TestClient, monkeypatch) -> None:
