@@ -118,6 +118,7 @@ def test_production_like_config_rejects_insecure_admin_settings(
         app_env="production",
         jwt_secret=jwt_secret,
         initial_admin_password=initial_admin_password,
+        bot_internal_token="strong-bot-token",
     )
 
     with pytest.raises(InsecureAdminAuthConfigError):
