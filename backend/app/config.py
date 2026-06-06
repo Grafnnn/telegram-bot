@@ -176,6 +176,10 @@ class Settings:
             raise InsecureAdminAuthConfigError(
                 "INITIAL_ADMIN_PASSWORD must be set for production-like admin auth."
             )
+        if not self.is_bot_internal_token_configured:
+            raise InsecureAdminAuthConfigError(
+                "BOT_INTERNAL_TOKEN must be set for production-like bot API access."
+            )
 
     def require_openai_api_key(self) -> str:
         """Return the OpenAI key or raise a clear AI-feature error."""
