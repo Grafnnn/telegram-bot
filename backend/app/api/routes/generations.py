@@ -49,7 +49,7 @@ def _selected_published_style(db: Session, user: TelegramUser) -> GarmentStyle:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Сначала выберите фасон.")
     style = db.get(GarmentStyle, user.selected_garment_style_id)
     if style is None or style.status != "published":
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Выбранный фасон не найдена или больше не опубликован.")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Выбранный фасон не найден или больше не опубликован.")
     return style
 
 
