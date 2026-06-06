@@ -50,9 +50,23 @@ cp .env.example .env
 
 - `TELEGRAM_BOT_TOKEN=put_token_here` — реальный токен Telegram-бота.
 - `OPENAI_API_KEY=put_openai_key_here` — реальный OpenAI API key, когда будете подключать AI.
-- `JWT_SECRET=change_me` — сильный секрет для JWT.
-- `INITIAL_ADMIN_PASSWORD=admin12345` — безопасный пароль начального администратора.
+- `BOT_INTERNAL_TOKEN=change_me_bot_internal_token` — общий внутренний токен backend и bot.
+- `JWT_SECRET=replace_with_strong_admin_jwt_secret` — сильный секрет для JWT.
+- `INITIAL_ADMIN_PASSWORD=replace_with_strong_admin_password` — безопасный пароль начального администратора.
 
+`APP_ENV=development` подходит для локального запуска. Для `APP_ENV=production`, `prod` или `staging` backend откажется стартовать с пустыми или placeholder-значениями `JWT_SECRET`, `INITIAL_ADMIN_PASSWORD` и `BOT_INTERNAL_TOKEN`.
+
+`MAX_UPLOAD_BYTES` задаёт лимит загрузки в байтах и имеет приоритет над `MAX_UPLOAD_SIZE_MB`, если обе переменные указаны.
+
+### Runtime checklist
+
+Перед запуском Docker/CI/staging проверьте:
+
+- `BOT_INTERNAL_TOKEN` задан одним и тем же значением для backend и bot.
+- `JWT_SECRET` и `INITIAL_ADMIN_PASSWORD` заменены на реальные секреты перед production-like запуском.
+- `OPENAI_API_KEY` и опциональный `OPENAI_MODEL` заданы для AI-функций.
+- Frontend получает только `VITE_API_BASE_URL` и `VITE_BACKEND_PUBLIC_URL`; backend secrets не должны попадать в Vite env.
+- Backend tests используют отдельную `TEST_DATABASE_URL`; имя тестовой базы должно содержать `test`.
 
 ## Frontend env для Vite
 
@@ -95,7 +109,7 @@ docker compose --env-file .env run --rm backend alembic upgrade head
 Initial admin создаётся при старте backend, если пользователя ещё нет:
 
 - Email: значение `INITIAL_ADMIN_EMAIL`, по умолчанию `admin@example.com`.
-- Password: значение `INITIAL_ADMIN_PASSWORD`, по умолчанию `admin12345`.
+- Password: значение `INITIAL_ADMIN_PASSWORD` из `.env`.
 
 ## Как создать ткань
 
@@ -170,7 +184,7 @@ curl -X POST http://localhost:8000/api/admin/fabrics \
 ## Как работает GPT-подбор ткани
 
 - Ткани добавляет только администратор через web-админку: название, артикул, характеристики, цена, наличие, фото ткани, фото фактуры и описание.
-- Фото тканей загружаются только через админку; GPT не создает фото, карточки, артикулы, цены или новые материалы.
+- Фото тканей загружаются только через админку; GPT не создает фото, карточки, цены или новые материалы.
 - Endpoint `POST /api/catalog/fabrics/recommend` принимает текст пользователя, например «Мне нужна ткань для летнего платья на свадьбу, чтобы выглядело дорого, но не ярко».
 - Backend извлекает требования (`garment_type`, `occasion`, `desired_style`, `preferred_colors`, `avoid`, `season`, `required_properties`).
 - Система ищет только опубликованные ткани из базы (`status="published"`) и отдает приоритет `in_stock`, затем `preorder`; `out_of_stock` не попадает в рекомендации, если есть подходящие доступные варианты.
