@@ -129,6 +129,36 @@ jobs:
         working-directory: admin-frontend
         run: npm run build
 
+  bot:
+    name: Bot
+    runs-on: ubuntu-latest
+    env:
+      TELEGRAM_BOT_TOKEN: put_token_here
+      BOT_BACKEND_API_URL: http://backend:8000/api
+      BACKEND_PUBLIC_URL: http://localhost:8000
+      BOT_INTERNAL_TOKEN: test_bot_internal_token
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            bot/requirements.txt
+            backend/requirements.txt
+
+      - name: Install bot test dependencies
+        run: python -m pip install -r bot/requirements.txt pytest==8.3.4
+
+      - name: Compile bot sources
+        run: python -m compileall bot/app bot/tests bot/check_token.py
+
+      - name: Run bot journey tests
+        run: PYTHONPATH=bot pytest bot/tests -q
+
   smoke-test:
     name: Docker Compose config
     runs-on: ubuntu-latest

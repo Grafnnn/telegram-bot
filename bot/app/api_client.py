@@ -11,6 +11,19 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 
+class BackendAPIError(RuntimeError):
+    """Controlled backend error surfaced to bot handlers."""
+
+    def __init__(self, status: int, path: str) -> None:
+        super().__init__(f"Backend API returned HTTP {status} for {path}")
+        self.status = status
+        self.path = path
+
+
+class BackendUnavailableError(RuntimeError):
+    """Raised when the backend cannot be reached in time."""
+
+
 class BackendAPIClient:
     def __init__(self, base_url: str, bot_internal_token: str | None = None) -> None:
         self.base_url = base_url.rstrip("/")
@@ -27,13 +40,12 @@ class BackendAPIClient:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
                 async with session.request(method, url, headers=headers, **kwargs) as response:
                     if response.status >= 400:
-                        text = await response.text()
-                        logger.error("Backend error %s %s: %s", response.status, url, text)
-                        return None
+                        logger.error("Backend error %s for %s %s", response.status, method, path)
+                        raise BackendAPIError(response.status, path)
                     return await response.json()
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            logger.error("Backend is unavailable: %s", exc)
-            return None
+            logger.error("Backend is unavailable for %s %s: %s", method, path, exc.__class__.__name__)
+            raise BackendUnavailableError(f"Backend is unavailable for {method} {path}") from exc
 
     async def upsert_user(self, telegram_id: int, username: str | None = None, first_name: str | None = None, last_name: str | None = None) -> dict | None:
         return await self._request(
