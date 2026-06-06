@@ -6,7 +6,7 @@ import logging
 from aiogram import Bot, Dispatcher
 
 from app.config import get_settings
-from app.handlers import ai_pick, catalog, fabric_selection, garment_styles, generations, selected, start, user_photo
+from app.handlers import ai_pick, catalog, fabric_selection, fallback, garment_styles, generations, selected, start, user_photo
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ async def main() -> None:
         return
     bot = Bot(token=settings.telegram_bot_token)
     dp = Dispatcher()
-    for router in [start.router, catalog.router, garment_styles.router, ai_pick.router, selected.router, fabric_selection.router, user_photo.router, generations.router]:
+    for router in [start.router, catalog.router, garment_styles.router, ai_pick.router, selected.router, fabric_selection.router, user_photo.router, generations.router, fallback.router]:
         dp.include_router(router)
     await dp.start_polling(bot)
 

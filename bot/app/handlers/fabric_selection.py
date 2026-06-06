@@ -10,6 +10,7 @@ from aiogram.types import CallbackQuery, Message
 
 from app.api_client import BackendAPIClient
 from app.config import get_settings
+from app.handler_utils import friendly_api_error_message, parse_callback_uuid
 from app.keyboards import select_fabric_keyboard
 
 router = Router()
@@ -70,12 +71,15 @@ async def answer_fabric_card(message: Message, fabric: dict[str, Any], reason: s
 async def upsert_message_user(message: Message) -> None:
     if message.from_user is None:
         return
-    await backend_client().upsert_user(
-        telegram_id=message.from_user.id,
-        username=message.from_user.username,
-        first_name=message.from_user.first_name,
-        last_name=message.from_user.last_name,
-    )
+    try:
+        await backend_client().upsert_user(
+            telegram_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            last_name=message.from_user.last_name,
+        )
+    except Exception as exc:
+        logger.warning("Could not sync Telegram user before handling message: %s", exc.__class__.__name__)
 
 
 @router.callback_query(lambda callback: bool(callback.data) and (callback.data.startswith("fabric:select:") or callback.data.startswith("pick:select:")))
@@ -83,16 +87,20 @@ async def select_fabric_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.data is None:
         await callback.answer("Не удалось определить пользователя.", show_alert=True)
         return
-    fabric_id = callback.data.split(":", 2)[2]
-    await backend_client().upsert_user(
-        telegram_id=callback.from_user.id,
-        username=callback.from_user.username,
-        first_name=callback.from_user.first_name,
-        last_name=callback.from_user.last_name,
-    )
-    result = await backend_client().select_fabric(callback.from_user.id, fabric_id)
-    if result is None:
-        await callback.answer("Не удалось выбрать ткань. Возможно, она больше не опубликована.", show_alert=True)
+    fabric_id = parse_callback_uuid(callback.data, "fabric:select:") or parse_callback_uuid(callback.data, "pick:select:")
+    if fabric_id is None:
+        await callback.answer("Эта кнопка больше не актуальна. Откройте каталог заново.", show_alert=True)
+        return
+    try:
+        await backend_client().upsert_user(
+            telegram_id=callback.from_user.id,
+            username=callback.from_user.username,
+            first_name=callback.from_user.first_name,
+            last_name=callback.from_user.last_name,
+        )
+        await backend_client().select_fabric(callback.from_user.id, fabric_id)
+    except Exception as exc:
+        await callback.answer(friendly_api_error_message(exc), show_alert=True)
         return
     await callback.answer("Ткань выбрана.", show_alert=False)
     if callback.message:

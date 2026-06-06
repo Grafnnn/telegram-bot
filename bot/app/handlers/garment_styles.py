@@ -11,6 +11,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from app.api_client import BackendAPIClient
 from app.config import get_settings
+from app.handler_utils import friendly_api_error_message, parse_callback_uuid
 from app.handlers.fabric_selection import upsert_message_user
 
 router = Router()
@@ -59,7 +60,11 @@ async def answer_style_card(message: Message, style: dict[str, Any]) -> None:
 
 async def show_styles(message: Message) -> None:
     await upsert_message_user(message)
-    styles = await backend_client().get_garment_styles()
+    try:
+        styles = await backend_client().get_garment_styles()
+    except Exception as exc:
+        await message.answer(friendly_api_error_message(exc))
+        return
     if not styles:
         await message.answer("Пока нет опубликованных фасонов.")
         return
@@ -83,16 +88,20 @@ async def select_style_callback(callback: CallbackQuery) -> None:
     if callback.from_user is None or callback.data is None:
         await callback.answer("Не удалось определить пользователя.", show_alert=True)
         return
-    style_id = callback.data.split(":", 2)[2]
-    await backend_client().upsert_user(
-        telegram_id=callback.from_user.id,
-        username=callback.from_user.username,
-        first_name=callback.from_user.first_name,
-        last_name=callback.from_user.last_name,
-    )
-    result = await backend_client().select_garment_style(callback.from_user.id, style_id)
-    if result is None:
-        await callback.answer("Не удалось выбрать фасон. Возможно, он больше не опубликован.", show_alert=True)
+    style_id = parse_callback_uuid(callback.data, "style:select:")
+    if style_id is None:
+        await callback.answer("Эта кнопка больше не актуальна. Откройте фасоны заново.", show_alert=True)
+        return
+    try:
+        await backend_client().upsert_user(
+            telegram_id=callback.from_user.id,
+            username=callback.from_user.username,
+            first_name=callback.from_user.first_name,
+            last_name=callback.from_user.last_name,
+        )
+        await backend_client().select_garment_style(callback.from_user.id, style_id)
+    except Exception as exc:
+        await callback.answer(friendly_api_error_message(exc), show_alert=True)
         return
     await callback.answer("Фасон выбран.", show_alert=False)
     if callback.message:

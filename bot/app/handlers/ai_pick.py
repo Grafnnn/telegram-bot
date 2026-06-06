@@ -7,6 +7,7 @@ from aiogram.types import Message
 
 from app.api_client import BackendAPIClient
 from app.config import get_settings
+from app.handler_utils import friendly_api_error_message
 from app.handlers.fabric_selection import answer_fabric_card, upsert_message_user
 from app.states import PickFabricStates
 
@@ -23,7 +24,12 @@ async def ask_description(message: Message, state: FSMContext) -> None:
 
 @router.message(PickFabricStates.waiting_for_description)
 async def recommend(message: Message, state: FSMContext) -> None:
-    recommendations = await BackendAPIClient(get_settings().backend_api_url).recommend_fabrics(message.text or "")
+    try:
+        recommendations = await BackendAPIClient(get_settings().backend_api_url).recommend_fabrics(message.text or "")
+    except Exception as exc:
+        await state.clear()
+        await message.answer(friendly_api_error_message(exc))
+        return
     await state.clear()
     if not recommendations:
         await message.answer("Пока в каталоге нет опубликованных тканей для подбора.")
