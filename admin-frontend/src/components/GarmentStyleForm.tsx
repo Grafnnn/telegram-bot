@@ -1,6 +1,7 @@
 import { ChangeEvent, FormEvent, useEffect, useState } from 'react';
 import { GarmentStyle, resolveImageUrl } from '../api/client';
 import { createGarmentStyle, updateGarmentStyle, uploadGarmentStyleImage } from '../api/garmentStyles';
+import { optionalTrimmed, requiredTrimmed, splitCsv } from '../utils/formValidation';
 
 type Props = {
   mode: 'create' | 'edit';
@@ -26,11 +27,6 @@ function toFormState(style?: GarmentStyle | null): FormState {
     description: style.description ?? '',
     compatible_fabric_categories: (style.compatible_fabric_categories ?? []).join(', '),
   };
-}
-
-function splitList(value: string): string[] | null {
-  const items = value.split(',').map((item) => item.trim()).filter(Boolean);
-  return items.length ? items : null;
 }
 
 export default function GarmentStyleForm({ mode, initialStyle, onSaved }: Props) {
@@ -64,10 +60,10 @@ export default function GarmentStyleForm({ mode, initialStyle, onSaved }: Props)
     setError('');
     try {
       const payload = {
-        name: form.name,
-        category: form.category,
-        description: form.description || null,
-        compatible_fabric_categories: splitList(form.compatible_fabric_categories),
+        name: requiredTrimmed(form.name, 'Название'),
+        category: requiredTrimmed(form.category, 'Категория'),
+        description: optionalTrimmed(form.description),
+        compatible_fabric_categories: splitCsv(form.compatible_fabric_categories),
       };
       const style = mode === 'create' ? await createGarmentStyle(payload) : await updateGarmentStyle(initialStyle?.id ?? '', payload);
       if (baseFile) await uploadGarmentStyleImage(style.id, baseFile, 'base');
