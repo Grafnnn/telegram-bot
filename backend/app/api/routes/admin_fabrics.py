@@ -4,13 +4,14 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_admin
 from app.database import get_db
 from app.models import Admin, Fabric, FabricImage, Generation
 from app.schemas.common import PaginatedResponse
-from app.schemas.fabric import FabricAIRequest, FabricCreate, FabricImageRead, FabricRead, FabricUpdate
+from app.schemas.fabric import FabricAIRequest, FabricCreate, FabricImageRead, FabricRead, FabricStatus, FabricUpdate, StockStatus
 from app.schemas.generation import GenerationRead
 from app.services.openai_service import check_fabric_card, generate_admin_fabric_description
 from app.services.storage_service import save_upload
@@ -29,6 +30,8 @@ PUBLISH_FIELD_LABELS = {
     "main image": "главное фото",
     "texture image": "фото фактуры",
 }
+
+ALLOWED_FABRIC_IMAGE_TYPES = {"main", "texture", "extra"}
 
 
 def _fabric_or_404(db: Session, fabric_id: UUID) -> Fabric:
@@ -57,6 +60,14 @@ def _payload_dict(payload: FabricCreate | FabricUpdate) -> dict:
     return payload.model_dump(exclude_unset=True)
 
 
+def _commit_or_conflict(db: Session) -> None:
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Ткань с таким артикулом уже существует") from exc
+
+
 @router.post("/fabrics/ai/generate-description")
 def ai_generate_description(payload: FabricAIRequest, _: Admin = Depends(get_current_admin)) -> dict:
     return generate_admin_fabric_description(payload.fabric_data, payload.image_url)
@@ -68,7 +79,7 @@ def ai_check_card(payload: FabricAIRequest, _: Admin = Depends(get_current_admin
 
 
 @router.get("/fabrics", response_model=PaginatedResponse[FabricRead])
-def list_fabrics(search: str | None = None, category: str | None = None, color: str | None = None, status: str | None = None, stock_status: str | None = None, page: int = 1, limit: int = 20, _: Admin = Depends(get_current_admin), db: Session = Depends(get_db)):
+def list_fabrics(search: str | None = None, category: str | None = None, color: str | None = None, status: FabricStatus | None = None, stock_status: StockStatus | None = None, page: int = 1, limit: int = 20, _: Admin = Depends(get_current_admin), db: Session = Depends(get_db)):
     stmt = select(Fabric).options(selectinload(Fabric.images)).order_by(Fabric.created_at.desc())
     stmt = _apply_fabric_filters(stmt, search, category, color, status, stock_status)
     items, total = paginate(db, stmt, page, limit)
@@ -79,7 +90,7 @@ def list_fabrics(search: str | None = None, category: str | None = None, color: 
 def create_fabric(payload: FabricCreate, _: Admin = Depends(get_current_admin), db: Session = Depends(get_db)) -> Fabric:
     fabric = Fabric(**_payload_dict(payload))
     db.add(fabric)
-    db.commit()
+    _commit_or_conflict(db)
     db.refresh(fabric)
     return _fabric_or_404(db, fabric.id)
 
@@ -94,7 +105,7 @@ def update_fabric(fabric_id: UUID, payload: FabricUpdate, _: Admin = Depends(get
     fabric = _fabric_or_404(db, fabric_id)
     for key, value in _payload_dict(payload).items():
         setattr(fabric, key, value)
-    db.commit()
+    _commit_or_conflict(db)
     return _fabric_or_404(db, fabric_id)
 
 
@@ -144,6 +155,10 @@ def archive_fabric(fabric_id: UUID, _: Admin = Depends(get_current_admin), db: S
 @router.post("/fabrics/{fabric_id}/images", response_model=FabricImageRead, status_code=status.HTTP_201_CREATED)
 async def upload_fabric_image(fabric_id: UUID, file: UploadFile = File(...), image_type: str = Form(...), sort_order: int = Form(0), _: Admin = Depends(get_current_admin), db: Session = Depends(get_db)) -> FabricImage:
     _fabric_or_404(db, fabric_id)
+    if image_type not in ALLOWED_FABRIC_IMAGE_TYPES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "image_type должен быть main, texture или extra")
+    if sort_order < 0:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "sort_order должен быть неотрицательным")
     image_url = await save_upload(file, "fabrics")
     image = FabricImage(fabric_id=fabric_id, image_url=image_url, image_type=image_type, sort_order=sort_order)
     db.add(image)

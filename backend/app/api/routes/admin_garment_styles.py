@@ -3,14 +3,14 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin
 from app.database import get_db
 from app.models import Admin, GarmentStyle
 from app.schemas.common import PaginatedResponse
-from app.schemas.garment_style import GarmentStyleCreate, GarmentStyleRead, GarmentStyleUpdate
+from app.schemas.garment_style import GarmentStyleCreate, GarmentStyleRead, GarmentStyleStatus, GarmentStyleUpdate
 from app.services.storage_service import save_upload
 from app.utils.pagination import paginate
 
@@ -24,8 +24,16 @@ def _style_or_404(db: Session, style_id: UUID) -> GarmentStyle:
     return style
 
 
+def _ensure_style_name_available(db: Session, name: str, style_id: UUID | None = None) -> None:
+    stmt = select(GarmentStyle).where(func.lower(GarmentStyle.name) == name.lower())
+    if style_id is not None:
+        stmt = stmt.where(GarmentStyle.id != style_id)
+    if db.scalar(stmt) is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Фасон с таким названием уже существует")
+
+
 @router.get("", response_model=PaginatedResponse[GarmentStyleRead])
-def list_styles(search: str | None = None, status: str | None = None, page: int = 1, limit: int = 20, _: Admin = Depends(get_current_admin), db: Session = Depends(get_db)):
+def list_styles(search: str | None = None, status: GarmentStyleStatus | None = None, page: int = 1, limit: int = 20, _: Admin = Depends(get_current_admin), db: Session = Depends(get_db)):
     stmt = select(GarmentStyle).order_by(GarmentStyle.created_at.desc())
     if search:
         like = f"%{search}%"
@@ -38,6 +46,7 @@ def list_styles(search: str | None = None, status: str | None = None, page: int 
 
 @router.post("", response_model=GarmentStyleRead, status_code=status.HTTP_201_CREATED)
 def create_style(payload: GarmentStyleCreate, _: Admin = Depends(get_current_admin), db: Session = Depends(get_db)) -> GarmentStyle:
+    _ensure_style_name_available(db, payload.name)
     style = GarmentStyle(**payload.model_dump(exclude_unset=True))
     db.add(style)
     db.commit()
@@ -53,6 +62,8 @@ def get_style(style_id: UUID, _: Admin = Depends(get_current_admin), db: Session
 @router.patch("/{style_id}", response_model=GarmentStyleRead)
 def update_style(style_id: UUID, payload: GarmentStyleUpdate, _: Admin = Depends(get_current_admin), db: Session = Depends(get_db)) -> GarmentStyle:
     style = _style_or_404(db, style_id)
+    if payload.name is not None:
+        _ensure_style_name_available(db, payload.name, style_id)
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(style, key, value)
     db.commit()
