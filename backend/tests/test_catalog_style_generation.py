@@ -155,12 +155,13 @@ def test_catalog_style_generation_without_openai_key_creates_failed_generation(c
     assert payload["garment_style_id"] == str(style_id)
 
 
-def test_catalog_style_generation_provider_error_is_normalized(client: TestClient, monkeypatch, caplog) -> None:
+def test_catalog_style_generation_provider_error_is_normalized(client: TestClient, monkeypatch) -> None:
     from app.api.routes import generations as generation_routes
 
     fabric_id = _create_fabric()
     style_id = _create_style(with_mask=True)
     telegram_id = _create_user(selected_fabric_id=fabric_id, selected_garment_style_id=style_id)
+    log_messages: list[str] = []
 
     def fake_generate(
         base_image_path: str,
@@ -174,21 +175,26 @@ def test_catalog_style_generation_provider_error_is_normalized(client: TestClien
         )
 
     monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_catalog_style", fake_generate)
-    with caplog.at_level("WARNING", logger="app.api.routes.generations"):
-        response = client.post(
-            "/api/generations/catalog-style",
-            headers=BOT_HEADERS,
-            json={"telegram_id": telegram_id},
-        )
+    monkeypatch.setattr(
+        generation_routes.logger,
+        "warning",
+        lambda message, *args: log_messages.append(message % args),
+    )
+    response = client.post(
+        "/api/generations/catalog-style",
+        headers=BOT_HEADERS,
+        json={"telegram_id": telegram_id},
+    )
     assert response.status_code == 201, response.text
     payload = response.json()
     assert payload["status"] == "failed"
     assert payload["error_message"] == generation_routes.IMAGE_ERROR
     assert "traceback" not in payload["error_message"].lower()
-    assert "RuntimeError" in caplog.text
-    assert "provider-token" not in caplog.text
-    assert "hunter2" not in caplog.text
-    assert "data:image/png;base64" not in caplog.text
+    log_text = "\n".join(log_messages)
+    assert "RuntimeError" in log_text
+    assert "provider-token" not in log_text
+    assert "hunter2" not in log_text
+    assert "data:image/png;base64" not in log_text
 
 
 def test_catalog_style_generation_saves_mocked_result(client: TestClient, monkeypatch) -> None:
