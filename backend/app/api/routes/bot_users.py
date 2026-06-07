@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.api.rate_limit import rate_limit_bot_api
 from app.api.deps import verify_bot_internal_token
 from app.database import get_db
 from app.models import Fabric, GarmentStyle, TelegramUser
@@ -19,7 +20,11 @@ from app.schemas.telegram_user import (
     TelegramUserUpsert,
 )
 
-router = APIRouter(prefix="/bot", tags=["bot"], dependencies=[Depends(verify_bot_internal_token)])
+router = APIRouter(
+    prefix="/bot",
+    tags=["bot"],
+    dependencies=[Depends(verify_bot_internal_token), Depends(rate_limit_bot_api)],
+)
 
 
 def _telegram_user_or_404(db: Session, telegram_id: int) -> TelegramUser:

@@ -99,6 +99,12 @@ class Settings:
     max_upload_size_mb: int = 10
     max_upload_bytes: int | None = None
 
+    rate_limit_window_seconds: int = 60
+    admin_login_rate_limit: int = 60
+    bot_api_rate_limit: int = 120
+    generation_rate_limit: int = 10
+    upload_rate_limit: int = 30
+
     initial_admin_email: str = "admin@example.com"
     initial_admin_password: str = INITIAL_ADMIN_PASSWORD_PLACEHOLDER
 
@@ -131,6 +137,13 @@ class Settings:
             "upload_dir": Path(_get_value("UPLOAD_DIR", str(cls.upload_dir), env_file)),
             "max_upload_size_mb": _get_int("MAX_UPLOAD_SIZE_MB", cls.max_upload_size_mb, env_file),
             "max_upload_bytes": _get_optional_int("MAX_UPLOAD_BYTES", cls.max_upload_bytes, env_file),
+            "rate_limit_window_seconds": _get_int(
+                "RATE_LIMIT_WINDOW_SECONDS", cls.rate_limit_window_seconds, env_file
+            ),
+            "admin_login_rate_limit": _get_int("ADMIN_LOGIN_RATE_LIMIT", cls.admin_login_rate_limit, env_file),
+            "bot_api_rate_limit": _get_int("BOT_API_RATE_LIMIT", cls.bot_api_rate_limit, env_file),
+            "generation_rate_limit": _get_int("GENERATION_RATE_LIMIT", cls.generation_rate_limit, env_file),
+            "upload_rate_limit": _get_int("UPLOAD_RATE_LIMIT", cls.upload_rate_limit, env_file),
             "initial_admin_email": _get_value("INITIAL_ADMIN_EMAIL", cls.initial_admin_email, env_file),
             "initial_admin_password": _get_value("INITIAL_ADMIN_PASSWORD", cls.initial_admin_password, env_file),
             "seed_demo_data": _get_bool("SEED_DEMO_DATA", cls.seed_demo_data, env_file),

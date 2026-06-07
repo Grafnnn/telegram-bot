@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, Upl
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.api.rate_limit import rate_limit_catalog_style_generation, rate_limit_user_photo_generation
 from app.api.deps import verify_bot_internal_token
 from app.config import MissingOpenAIKeyError, get_settings
 from app.database import get_db
@@ -123,7 +124,7 @@ def _mark_generation_failed(generation: Generation, exc: Exception) -> None:
     "/catalog-style",
     response_model=GenerationRead,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(verify_bot_internal_token)],
+    dependencies=[Depends(verify_bot_internal_token), Depends(rate_limit_catalog_style_generation)],
 )
 def create_catalog_style_generation(
     payload: CatalogStyleGenerationRequest,
@@ -178,7 +179,7 @@ def create_catalog_style_generation(
     "/user-photo",
     response_model=GenerationRead,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(verify_bot_internal_token)],
+    dependencies=[Depends(verify_bot_internal_token), Depends(rate_limit_user_photo_generation)],
 )
 async def create_user_photo_generation(telegram_user_id: UUID | None = Form(None), fabric_id: UUID = Form(...), photo: UploadFile = File(...), db: Session = Depends(get_db)) -> Generation:
     if db.get(Fabric, fabric_id) is None:
