@@ -135,7 +135,7 @@ Rollback notes:
 
 - Для кода откатитесь к предыдущему green commit/tag и повторите smoke checks.
 - Не откатывайте production database вручную без отдельного migration/backup plan.
-- Если проблема только secrets/env, исправьте `.env` и перезапустите сервисы без изменения кода.
+- Если проблема только в secrets/env, исправьте `.env` и перезапустите сервисы без изменения кода.
 
 ## Frontend env для Vite
 
@@ -274,7 +274,7 @@ curl -X POST http://localhost:8000/api/admin/fabrics \
 - Backend извлекает требования (`garment_type`, `occasion`, `desired_style`, `preferred_colors`, `avoid`, `season`, `required_properties`).
 - Система ищет только опубликованные ткани из базы (`status="published"`) и отдает приоритет `in_stock`, затем `preorder`; `out_of_stock` не попадает в рекомендации, если есть подходящие доступные варианты.
 - При настроенном `OPENAI_API_KEY` GPT анализирует запрос и ранжирует только переданные backend реальные candidate fabrics; backend отбрасывает любые `fabric_id`, которых не было в списке кандидатов. Модель никогда не должна возвращать ткань, которой нет в базе данных.
-- Если `OPENAI_API_KEY` пока равен `put_openai_key_here`, используется простой fallback-подбор по ключевым словам и характеристикам; endpoint продолжает возвращатреальные `fabric_id` из каталога.
+- Если `OPENAI_API_KEY` пока равен `put_openai_key_here`, используется простой fallback-подбор по ключевым словам и характеристикам; endpoint продолжает возвращать реальные `fabric_id` из каталога.
 
 ## Telegram-сценарий выбора ткани
 
