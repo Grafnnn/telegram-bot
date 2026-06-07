@@ -3,7 +3,7 @@
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -11,7 +11,14 @@ from app.api.deps import verify_bot_internal_token
 from app.config import MissingOpenAIKeyError, get_settings
 from app.database import get_db
 from app.models import Fabric, GarmentStyle, Generation, TelegramUser
-from app.schemas.generation import CatalogStyleGenerationRequest, GenerationRead
+from app.schemas.generation import (
+    GENERATION_STATUS_COMPLETED,
+    GENERATION_STATUS_FAILED,
+    GENERATION_STATUS_PENDING,
+    GENERATION_STATUS_PROCESSING,
+    CatalogStyleGenerationRequest,
+    GenerationRead,
+)
 from app.services import image_generation_service
 from app.services.image_generation_service import IMAGE_ERROR, IMAGE_EDIT_PROMPT
 from app.services.storage_service import resolve_upload_path, save_generated_image, save_upload
@@ -19,6 +26,7 @@ from app.utils.redaction import safe_exception_summary
 
 router = APIRouter(prefix="/generations", tags=["generations"])
 logger = logging.getLogger(__name__)
+ACTIVE_GENERATION_STATUSES = (GENERATION_STATUS_PENDING, GENERATION_STATUS_PROCESSING)
 
 
 def _generation_or_404(db: Session, generation_id: UUID) -> Generation:
@@ -81,16 +89,54 @@ def _safe_generation_error(exc: Exception) -> str:
     return IMAGE_ERROR
 
 
+def _active_catalog_style_generation(
+    db: Session,
+    user: TelegramUser,
+    fabric: Fabric,
+    style: GarmentStyle,
+) -> Generation | None:
+    return db.scalar(
+        select(Generation)
+        .where(
+            Generation.telegram_user_id == user.id,
+            Generation.fabric_id == fabric.id,
+            Generation.garment_style_id == style.id,
+            Generation.mode == "catalog_style",
+            Generation.status.in_(ACTIVE_GENERATION_STATUSES),
+        )
+        .order_by(Generation.created_at.desc())
+    )
+
+
+def _mark_generation_completed(generation: Generation, image_bytes: bytes) -> None:
+    generation.result_image_url = save_generated_image(image_bytes, "png")
+    generation.status = GENERATION_STATUS_COMPLETED
+    generation.error_message = None
+
+
+def _mark_generation_failed(generation: Generation, exc: Exception) -> None:
+    generation.status = GENERATION_STATUS_FAILED
+    generation.error_message = _safe_generation_error(exc)
+
+
 @router.post(
     "/catalog-style",
     response_model=GenerationRead,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(verify_bot_internal_token)],
 )
-def create_catalog_style_generation(payload: CatalogStyleGenerationRequest, db: Session = Depends(get_db)) -> Generation:
+def create_catalog_style_generation(
+    payload: CatalogStyleGenerationRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> Generation:
     user = _telegram_user_or_404(db, payload.telegram_id)
     fabric = _selected_published_fabric(db, user)
     style = _selected_published_style(db, user)
+    active_generation = _active_catalog_style_generation(db, user, fabric, style)
+    if active_generation is not None:
+        response.status_code = status.HTTP_200_OK
+        return active_generation
     texture_url = _texture_image_url(fabric)
     base_url = _base_image_url(style)
     texture_path = resolve_upload_path(texture_url)
@@ -103,7 +149,7 @@ def create_catalog_style_generation(payload: CatalogStyleGenerationRequest, db: 
         garment_style_id=style.id,
         mode="catalog_style",
         prompt=prompt,
-        status="processing",
+        status=GENERATION_STATUS_PROCESSING,
     )
     db.add(generation)
     db.commit()
@@ -115,12 +161,9 @@ def create_catalog_style_generation(payload: CatalogStyleGenerationRequest, db: 
             str(mask_path) if mask_path else None,
             prompt,
         )
-        generation.result_image_url = save_generated_image(image_bytes, "png")
-        generation.status = "completed"
-        generation.error_message = None
+        _mark_generation_completed(generation, image_bytes)
     except Exception as exc:
-        generation.status = "failed"
-        generation.error_message = _safe_generation_error(exc)
+        _mark_generation_failed(generation, exc)
         logger.warning(
             "Catalog style generation failed generation_id=%s error=%s",
             generation.id,
@@ -142,7 +185,14 @@ async def create_user_photo_generation(telegram_user_id: UUID | None = Form(None
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Ткань не найдена")
     photo_url = await save_upload(photo, "user-photos")
     configured = get_settings().is_openai_configured
-    generation = Generation(telegram_user_id=telegram_user_id, fabric_id=fabric_id, user_photo_url=photo_url, mode="user_photo", status="pending" if configured else "failed", error_message=None if configured else IMAGE_ERROR)
+    generation = Generation(
+        telegram_user_id=telegram_user_id,
+        fabric_id=fabric_id,
+        user_photo_url=photo_url,
+        mode="user_photo",
+        status=GENERATION_STATUS_PENDING if configured else GENERATION_STATUS_FAILED,
+        error_message=None if configured else IMAGE_ERROR,
+    )
     db.add(generation)
     db.commit()
     db.refresh(generation)

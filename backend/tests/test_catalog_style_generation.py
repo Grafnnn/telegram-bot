@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
+from sqlalchemy import select
 
 from app.config import get_settings
 from app.database import SessionLocal
@@ -13,6 +17,7 @@ from app.models.fabric_image import FabricImage
 from app.models.garment_style import GarmentStyle
 from app.models.generation import Generation
 from app.models.telegram_user import TelegramUser
+from app.schemas.generation import GenerationRead
 
 BOT_HEADERS = {"X-Bot-Token": "test_bot_internal_token"}
 WRONG_BOT_HEADERS = {"X-Bot-Token": "wrong"}
@@ -222,3 +227,58 @@ def test_catalog_style_generation_saves_mocked_result(client: TestClient, monkey
         generation = db.get(Generation, payload["id"])
         assert generation is not None
         assert generation.result_image_url == payload["result_image_url"]
+
+
+def test_catalog_style_generation_reuses_active_request(client: TestClient, monkeypatch) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    style_id = _create_style(with_mask=True)
+    telegram_id = _create_user(selected_fabric_id=fabric_id, selected_garment_style_id=style_id)
+    with SessionLocal() as db:
+        user = db.scalar(select(TelegramUser).where(TelegramUser.telegram_id == telegram_id))
+        assert user is not None
+        generation = Generation(
+            telegram_user_id=user.id,
+            fabric_id=fabric_id,
+            garment_style_id=style_id,
+            mode="catalog_style",
+            status="pending",
+        )
+        db.add(generation)
+        db.commit()
+        db.refresh(generation)
+        generation_id = str(generation.id)
+
+    def fail_generate(*_args, **_kwargs) -> bytes:
+        raise AssertionError("provider should not be called for an active generation")
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_catalog_style", fail_generate)
+
+    response = client.post("/api/generations/catalog-style", headers=BOT_HEADERS, json={"telegram_id": telegram_id})
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["id"] == generation_id
+    assert payload["status"] == "pending"
+
+
+def test_get_generation_missing_id_returns_404(client: TestClient) -> None:
+    response = client.get(f"/api/generations/{uuid4()}")
+
+    assert response.status_code == 404, response.text
+
+
+def test_generation_schema_rejects_unknown_status() -> None:
+    now = datetime.now(timezone.utc)
+
+    with pytest.raises(ValidationError):
+        GenerationRead.model_validate(
+            {
+                "id": uuid4(),
+                "mode": "catalog_style",
+                "status": "failed Authorization: Bearer provider-token",
+                "created_at": now,
+                "updated_at": now,
+            }
+        )

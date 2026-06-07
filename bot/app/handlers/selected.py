@@ -12,6 +12,10 @@ from app.handlers.garment_styles import format_style_card, style_image_url
 
 router = Router()
 GENERATION_CALLBACK = "generation:create_catalog_style"
+GENERATION_COMPLETED_STATUS = "completed"
+GENERATION_ACTIVE_STATUSES = {"pending", "processing"}
+GENERATION_PENDING_MESSAGE = "AI-визуализация уже создается. Проверьте результат чуть позже."
+GENERATION_UNAVAILABLE_MESSAGE = "AI-визуализация пока недоступна. Попробуйте еще раз чуть позже."
 
 
 def backend_client() -> BackendAPIClient:
@@ -100,11 +104,15 @@ async def create_catalog_style_generation(callback: CallbackQuery) -> None:
         if callback.message:
             await callback.message.answer("AI-визуализация пока недоступна. Попробуйте еще раз чуть позже.")
         return
-    if result.get("status") == "completed":
+    generation_status = result.get("status")
+    if generation_status == GENERATION_COMPLETED_STATUS:
         image_url = generation_result_url(result.get("result_image_url"))
         text = "Готово! AI-визуализация ткани на выбранном фасоне."
         if callback.message:
             await answer_photo_or_text(callback.message, image_url, text if image_url else f"{text}\n{result.get('result_image_url') or ''}".strip())
         return
     if callback.message:
-        await callback.message.answer("AI-визуализация пока недоступна. Попробуйте еще раз чуть позже.")
+        if generation_status in GENERATION_ACTIVE_STATUSES:
+            await callback.message.answer(GENERATION_PENDING_MESSAGE)
+            return
+        await callback.message.answer(GENERATION_UNAVAILABLE_MESSAGE)
