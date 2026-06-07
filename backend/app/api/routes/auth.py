@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.api.rate_limit import rate_limit_admin_login
 from app.api.deps import get_current_admin
 from app.database import get_db
 from app.models import Admin
@@ -13,7 +14,11 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
+def login(
+    payload: LoginRequest,
+    _: None = Depends(rate_limit_admin_login),
+    db: Session = Depends(get_db),
+) -> TokenResponse:
     admin = authenticate_admin(db, payload.email, payload.password)
     if admin is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Неверный email или пароль")

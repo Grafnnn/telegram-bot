@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from app.api.rate_limit import rate_limit_upload
 from app.api.query_params import (
     DEFAULT_PAGE_LIMIT,
     CreatedAtSortQuery,
@@ -89,7 +90,14 @@ def update_style(style_id: UUID, payload: GarmentStyleUpdate, _: Admin = Depends
 
 
 @router.post("/{style_id}/images", response_model=GarmentStyleRead, status_code=status.HTTP_201_CREATED)
-async def upload_style_image(style_id: UUID, file: UploadFile = File(...), image_type: str = Form(...), _: Admin = Depends(get_current_admin), db: Session = Depends(get_db)) -> GarmentStyle:
+async def upload_style_image(
+    style_id: UUID,
+    file: UploadFile = File(...),
+    image_type: str = Form(...),
+    _: Admin = Depends(get_current_admin),
+    __: None = Depends(rate_limit_upload),
+    db: Session = Depends(get_db),
+) -> GarmentStyle:
     style = _style_or_404(db, style_id)
     if image_type not in {"base", "mask"}:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "image_type должен быть base или mask")

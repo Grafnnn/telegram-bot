@@ -7,6 +7,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from app.api.rate_limit import rate_limit_upload
 from app.api.query_params import (
     DEFAULT_PAGE_LIMIT,
     CreatedAtSortQuery,
@@ -174,7 +175,15 @@ def archive_fabric(fabric_id: UUID, _: Admin = Depends(get_current_admin), db: S
 
 
 @router.post("/fabrics/{fabric_id}/images", response_model=FabricImageRead, status_code=status.HTTP_201_CREATED)
-async def upload_fabric_image(fabric_id: UUID, file: UploadFile = File(...), image_type: str = Form(...), sort_order: int = Form(0), _: Admin = Depends(get_current_admin), db: Session = Depends(get_db)) -> FabricImage:
+async def upload_fabric_image(
+    fabric_id: UUID,
+    file: UploadFile = File(...),
+    image_type: str = Form(...),
+    sort_order: int = Form(0),
+    _: Admin = Depends(get_current_admin),
+    __: None = Depends(rate_limit_upload),
+    db: Session = Depends(get_db),
+) -> FabricImage:
     _fabric_or_404(db, fabric_id)
     if image_type not in ALLOWED_FABRIC_IMAGE_TYPES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "image_type должен быть main, texture или extra")

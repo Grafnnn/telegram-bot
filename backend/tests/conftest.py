@@ -25,6 +25,7 @@ os.environ.setdefault("INITIAL_ADMIN_PASSWORD", "admin12345")
 os.environ.setdefault("SEED_DEMO_DATA", "false")
 
 from app.config import get_settings  # noqa: E402
+from app.api.rate_limit import rate_limiter  # noqa: E402
 from app.database import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.services.seed_service import seed_initial_admin  # noqa: E402
@@ -48,6 +49,7 @@ def migrated_database() -> None:
 def client() -> TestClient:
     """Return a TestClient with a seeded initial admin and isolated upload folders."""
 
+    rate_limiter.clear()
     get_settings.cache_clear()
     settings = get_settings()
     shutil.rmtree(settings.upload_dir, ignore_errors=True)
@@ -63,3 +65,4 @@ def client() -> TestClient:
 
     with TestClient(app) as test_client:
         yield test_client
+    rate_limiter.clear()
