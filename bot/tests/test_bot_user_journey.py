@@ -79,6 +79,14 @@ class GenerationValidationClient:
         raise BackendAPIError(422, "/generations/catalog-style")
 
 
+class GenerationResultClient:
+    def __init__(self, result: dict | None) -> None:
+        self.result = result
+
+    async def create_catalog_style_generation(self, telegram_id: int):
+        return self.result
+
+
 def run(coro):
     return asyncio.run(coro)
 
@@ -159,6 +167,35 @@ def test_generation_without_required_selection_is_controlled(monkeypatch) -> Non
 
     assert callback.answers == [("Создаю визуализацию…", False)]
     assert message.answers[-1][0] == "Сначала выберите опубликованную ткань и фасон, затем попробуйте снова."
+    assert_no_secret_leak(message.answers[-1][0])
+
+
+@pytest.mark.parametrize(
+    ("result", "expected_message"),
+    [
+        (
+            {"status": "processing", "error_message": f"Traceback X-Bot-Token={SECRET_TOKEN}"},
+            selected.GENERATION_PENDING_MESSAGE,
+        ),
+        (
+            {"status": "failed", "error_message": f"provider password={SECRET_TOKEN}"},
+            selected.GENERATION_UNAVAILABLE_MESSAGE,
+        ),
+        (
+            {"status": f"unexpected Authorization: Bearer {SECRET_TOKEN}"},
+            selected.GENERATION_UNAVAILABLE_MESSAGE,
+        ),
+    ],
+)
+def test_generation_status_messages_are_safe(monkeypatch, result, expected_message) -> None:
+    monkeypatch.setattr(selected, "backend_client", lambda: GenerationResultClient(result))
+    message = FakeMessage()
+    callback = FakeCallback(selected.GENERATION_CALLBACK, message)
+
+    run(selected.create_catalog_style_generation(callback))
+
+    assert callback.answers == [("Создаю визуализацию…", False)]
+    assert message.answers[-1][0] == expected_message
     assert_no_secret_leak(message.answers[-1][0])
 
 

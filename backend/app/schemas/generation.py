@@ -1,11 +1,26 @@
 """Generation schemas."""
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
 
 from app.schemas.common import ORMModel
+
+GENERATION_STATUS_PENDING = "pending"
+GENERATION_STATUS_PROCESSING = "processing"
+GENERATION_STATUS_COMPLETED = "completed"
+GENERATION_STATUS_FAILED = "failed"
+GENERATION_STATUSES = frozenset(
+    {
+        GENERATION_STATUS_PENDING,
+        GENERATION_STATUS_PROCESSING,
+        GENERATION_STATUS_COMPLETED,
+        GENERATION_STATUS_FAILED,
+    }
+)
+GenerationStatus = Literal["pending", "processing", "completed", "failed"]
 
 
 class CatalogStyleGenerationRequest(BaseModel):
@@ -21,7 +36,7 @@ class GenerationRead(ORMModel):
     result_image_url: str | None = None
     mode: str
     prompt: str | None = None
-    status: str
+    status: GenerationStatus
     error_message: str | None = None
     created_at: datetime
     updated_at: datetime
