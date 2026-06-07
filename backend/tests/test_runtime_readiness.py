@@ -13,6 +13,24 @@ from app.config import InsecureAdminAuthConfigError, Settings, get_settings
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SECRET_ENV_NAMES = {"BOT_INTERNAL_TOKEN", "JWT_SECRET", "INITIAL_ADMIN_PASSWORD"}
+CRITICAL_DEPLOYMENT_ENV_NAMES = {
+    "APP_ENV",
+    "DATABASE_URL",
+    "JWT_SECRET",
+    "INITIAL_ADMIN_PASSWORD",
+    "BOT_INTERNAL_TOKEN",
+    "TELEGRAM_BOT_TOKEN",
+    "OPENAI_API_KEY",
+    "UPLOAD_DIR",
+    "MAX_UPLOAD_BYTES",
+    "RATE_LIMIT_WINDOW_SECONDS",
+    "ADMIN_LOGIN_RATE_LIMIT",
+    "BOT_API_RATE_LIMIT",
+    "GENERATION_RATE_LIMIT",
+    "UPLOAD_RATE_LIMIT",
+    "VITE_API_BASE_URL",
+    "VITE_BACKEND_PUBLIC_URL",
+}
 
 
 def _env_example_keys() -> set[str]:
@@ -31,6 +49,33 @@ def test_env_example_covers_docker_compose_references() -> None:
     compose_vars = set(re.findall(r"\$\{([A-Z0-9_]+)(?::-[^}]*)?\}", compose_text))
 
     assert compose_vars - _env_example_keys() == set()
+
+
+def test_readme_documents_critical_deployment_environment() -> None:
+    readme_text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+
+    missing = {name for name in CRITICAL_DEPLOYMENT_ENV_NAMES if name not in readme_text}
+
+    assert missing == set()
+
+
+def test_readme_documents_release_checklist_invariants() -> None:
+    readme_text = (REPO_ROOT / "README.md").read_text(encoding="utf-8").lower()
+
+    required_phrases = {
+        "required production environment",
+        "deployment checklist",
+        "post-merge smoke checks",
+        "bot_internal_token",
+        "одинаковый strong token",
+        "placeholder запрещен",
+        "github actions jobs green",
+        "x-request-id",
+        "retry-after",
+        "rollback",
+    }
+
+    assert {phrase for phrase in required_phrases if phrase not in readme_text} == set()
 
 
 def test_frontend_vite_env_does_not_expose_backend_secrets() -> None:

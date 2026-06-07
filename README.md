@@ -68,6 +68,75 @@ cp .env.example .env
 - Frontend получает только `VITE_API_BASE_URL` и `VITE_BACKEND_PUBLIC_URL`; backend secrets не должны попадать в Vite env.
 - Backend tests используют отдельную `TEST_DATABASE_URL`; имя тестовой базы должно содержать `test`.
 
+## Required production environment
+
+Для `APP_ENV=production`, `prod` или `staging` сначала подготовьте production/staging `.env` и не используйте demo-плейсхолдеры из `.env.example`.
+
+Обязательные runtime values:
+
+| Переменная | Где используется | Production requirement |
+| --- | --- | --- |
+| `APP_ENV` | backend | `production`, `prod` или `staging` включает fail-fast проверку unsafe placeholders. |
+| `DATABASE_URL` | backend | URL PostgreSQL для runtime базы; не должен указывать на test DB. |
+| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | Docker Compose Postgres | Замените local defaults перед production-like запуском. |
+| `JWT_SECRET` | backend admin auth | Сильный секрет; `change_me` и пустое значение запрещены в production-like режиме. |
+| `INITIAL_ADMIN_EMAIL` | backend bootstrap | Email initial admin, создается один раз idempotent bootstrap-логикой. |
+| `INITIAL_ADMIN_PASSWORD` | backend bootstrap | Сильный initial password; `admin12345` и пустое значение запрещены в production-like режиме. |
+| `BOT_INTERNAL_TOKEN` | backend и bot | Одинаковый strong token в обоих сервисах; placeholder запрещен в production-like backend. |
+| `TELEGRAM_BOT_TOKEN` | bot | Реальный token Telegram-бота; placeholder безопасно завершает bot container без запуска polling. |
+| `OPENAI_API_KEY`, `OPENAI_MODEL` | backend AI/generation | Реальный key нужен для AI-функций; placeholder оставляет controlled failed state/error. |
+| `UPLOAD_DIR` | backend | Persistent uploads volume/path для fabrics, garment styles, generations и user photos. |
+| `MAX_UPLOAD_BYTES` | backend upload validation | Byte limit, имеет приоритет над `MAX_UPLOAD_SIZE_MB`. |
+| `RATE_LIMIT_WINDOW_SECONDS`, `ADMIN_LOGIN_RATE_LIMIT`, `BOT_API_RATE_LIMIT`, `GENERATION_RATE_LIMIT`, `UPLOAD_RATE_LIMIT` | backend abuse guards | Ненулевые scoped limits для admin login, bot API, generation и uploads; `0` используйте только для local debugging. |
+| `VITE_API_BASE_URL`, `VITE_BACKEND_PUBLIC_URL` | admin frontend | Единственные frontend env values; не передавайте backend secrets в `VITE_*`. |
+
+## Deployment checklist
+
+Порядок production/staging запуска:
+
+1. Создайте `.env` из `.env.example` и замените все required secrets.
+2. Убедитесь, что `APP_ENV` соответствует окружению, а `SEED_DEMO_DATA=false` для production-like режимов.
+3. Проверьте, что `BOT_INTERNAL_TOKEN` совпадает в backend и bot.
+4. Поднимите PostgreSQL и дождитесь healthcheck `pg_isready`.
+5. Примените migrations: Docker backend делает `alembic upgrade head` перед `uvicorn`; при ручном запуске выполните `docker compose --env-file .env run --rm backend alembic upgrade head`.
+6. Запустите backend и проверьте `/api/health`; ответ не должен содержать secrets/config values.
+7. Запустите admin frontend и убедитесь, что он получает только `VITE_API_BASE_URL` и `VITE_BACKEND_PUBLIC_URL`.
+8. Запустите bot только после проверки backend health и совпадения `BOT_INTERNAL_TOKEN`.
+9. Перед deploy убедитесь, что GitHub Actions jobs green: `Backend`, `Admin frontend`, `Docker Compose config`, `Whitespace check`, `Bot`.
+
+Runtime diagnostics:
+
+- Backend добавляет `X-Request-ID` в ответы и принимает безопасный входящий `X-Request-ID` для корреляции логов.
+- `/api/health` возвращает только `{"status":"ok"}` и не раскрывает secrets.
+- Upload limits возвращают controlled `400`/`413`/`415`, rate limits возвращают `429` с `Retry-After`.
+- Provider/OpenAI failures не должны попадать наружу как raw traceback.
+
+## Post-merge smoke checks
+
+После merge/deploy выполните короткую проверку:
+
+```bash
+docker compose --env-file .env config
+docker compose --env-file .env up --build
+curl -i http://localhost:8000/api/health
+curl -i -H 'X-Request-ID: smoke-test' http://localhost:8000/api/health
+```
+
+Затем проверьте вручную:
+
+1. Backend logs не содержат `JWT_SECRET`, `BOT_INTERNAL_TOKEN`, `TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY`, password values, upload bytes/base64.
+2. Admin login работает с `INITIAL_ADMIN_EMAIL` и `INITIAL_ADMIN_PASSWORD`.
+3. Public catalog route открывается без admin token.
+4. Admin frontend не показывает raw backend/provider errors и чистит token на `401`.
+5. Bot `/start` отвечает friendly message даже при временно недоступном backend.
+6. Generation endpoint с отсутствующим/неверным `X-Bot-Token` возвращает `401`, а частые запросы после лимита получают safe `429`.
+
+Rollback notes:
+
+- Для кода откатитесь к предыдущему green commit/tag и повторите smoke checks.
+- Не откатывайте production database вручную без отдельного migration/backup plan.
+- Если проблема только secrets/env, исправьте `.env` и перезапустите сервисы без изменения кода.
+
 ## Frontend env для Vite
 
 Admin frontend читает только переменные с префиксом `VITE_`:
@@ -205,7 +274,7 @@ curl -X POST http://localhost:8000/api/admin/fabrics \
 - Backend извлекает требования (`garment_type`, `occasion`, `desired_style`, `preferred_colors`, `avoid`, `season`, `required_properties`).
 - Система ищет только опубликованные ткани из базы (`status="published"`) и отдает приоритет `in_stock`, затем `preorder`; `out_of_stock` не попадает в рекомендации, если есть подходящие доступные варианты.
 - При настроенном `OPENAI_API_KEY` GPT анализирует запрос и ранжирует только переданные backend реальные candidate fabrics; backend отбрасывает любые `fabric_id`, которых не было в списке кандидатов. Модель никогда не должна возвращать ткань, которой нет в базе данных.
-- Если `OPENAI_API_KEY` пока равен `put_openai_key_here`, используется простой fallback-подбор по ключевым словам и характеристикам; endpoint продолжает возвращать реальные `fabric_id` из каталога.
+- Если `OPENAI_API_KEY` пока равен `put_openai_key_here`, используется простой fallback-подбор по ключевым словам и характеристикам; endpoint продолжает возвращатреальные `fabric_id` из каталога.
 
 ## Telegram-сценарий выбора ткани
 
