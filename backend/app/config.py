@@ -22,6 +22,10 @@ class InsecureAdminAuthConfigError(RuntimeError):
     """Raised when admin auth settings are unsafe for production-like runtime."""
 
 
+class InsecureBootstrapConfigError(RuntimeError):
+    """Raised when database bootstrap settings are unsafe for the runtime."""
+
+
 def _read_env_file(path: Path = Path(".env")) -> dict[str, str]:
     """Read simple KEY=VALUE entries from an environment file if it exists."""
 
@@ -179,6 +183,15 @@ class Settings:
         if not self.is_bot_internal_token_configured:
             raise InsecureAdminAuthConfigError(
                 "BOT_INTERNAL_TOKEN must be set for production-like bot API access."
+            )
+
+    def validate_bootstrap_config(self) -> None:
+        """Reject unsafe database bootstrap settings before creating seed records."""
+
+        self.validate_admin_auth_config()
+        if self.is_production_like and self.seed_demo_data:
+            raise InsecureBootstrapConfigError(
+                "SEED_DEMO_DATA must be disabled for production-like database bootstrap."
             )
 
     def require_openai_api_key(self) -> str:

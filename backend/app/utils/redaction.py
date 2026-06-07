@@ -21,7 +21,8 @@ SENSITIVE_KEY_FRAGMENTS = (
 )
 
 _HEADER_VALUE_RE = re.compile(r"(?i)\b(authorization|x-bot-token)\s*[:=]\s*(bearer\s+)?[^\s,;]+")
-_KEY_VALUE_RE = re.compile(r"(?i)\b(token|secret|password|api[_-]?key)\s*[:=]\s*[^\s,;]+")
+_KEY_VALUE_RE = re.compile(r"(?i)\b([a-z0-9_-]*(?:token|secret|password|api[_-]?key)[a-z0-9_-]*)\s*[:=]\s*[^\s,;]+")
+_URL_PASSWORD_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^:\s/@]+):[^@\s/]+@")
 _BEARER_RE = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+")
 _DATA_URI_RE = re.compile(r"(?i)data:image/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+")
 _LONG_BASE64_RE = re.compile(r"\b[A-Za-z0-9+/]{80,}={0,2}\b")
@@ -43,6 +44,7 @@ def is_sensitive_key(key: object) -> bool:
 
 def sanitize_log_message(value: object) -> str:
     text = str(value)
+    text = _URL_PASSWORD_RE.sub(lambda match: f"{match.group(1)}:{REDACTED}@", text)
     text = _DATA_URI_RE.sub("data:image/[REDACTED]", text)
     text = _HEADER_VALUE_RE.sub(lambda match: f"{match.group(1)}: {REDACTED}", text)
     text = _KEY_VALUE_RE.sub(lambda match: f"{match.group(1)}={REDACTED}", text)

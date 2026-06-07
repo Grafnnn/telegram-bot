@@ -13,7 +13,7 @@ from app.api.routes import admin_fabrics, admin_garment_styles, auth, bot_users,
 from app.config import get_settings
 from app.database import SessionLocal
 from app.schemas.common import HealthResponse
-from app.services.seed_service import seed_demo_data, seed_initial_admin
+from app.services.bootstrap_service import bootstrap_database, prepare_upload_dirs
 from app.utils.redaction import safe_exception_summary, safe_path_for_log
 
 logger = logging.getLogger(__name__)
@@ -28,14 +28,9 @@ def _request_id_from_header(value: str | None) -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    settings.validate_admin_auth_config()
-    settings.upload_dir.mkdir(parents=True, exist_ok=True)
-    for folder in ["fabrics", "garment-styles", "generations", "user-photos"]:
-        (settings.upload_dir / folder).mkdir(parents=True, exist_ok=True)
+    prepare_upload_dirs(settings.upload_dir)
     with SessionLocal() as db:
-        seed_initial_admin(db, settings.initial_admin_email, settings.initial_admin_password)
-        if settings.seed_demo_data:
-            seed_demo_data(db)
+        bootstrap_database(db, settings)
     yield
 
 

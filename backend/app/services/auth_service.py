@@ -1,6 +1,7 @@
 """Admin auth service."""
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Admin
@@ -24,6 +25,13 @@ def ensure_initial_admin(db: Session, email: str, password: str) -> Admin:
         return admin
     admin = Admin(email=email, password_hash=hash_password(password), full_name="Initial Admin")
     db.add(admin)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing_admin = db.scalar(select(Admin).where(Admin.email == email))
+        if existing_admin:
+            return existing_admin
+        raise
     db.refresh(admin)
     return admin
