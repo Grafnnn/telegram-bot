@@ -10,7 +10,6 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy.engine import make_url
 
 DEFAULT_TEST_DATABASE_URL = "postgresql+psycopg://postgres:postgres@localhost:5432/fashion_bot_test"
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL") or DEFAULT_TEST_DATABASE_URL
@@ -29,24 +28,17 @@ from app.config import get_settings  # noqa: E402
 from app.database import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.services.seed_service import seed_initial_admin  # noqa: E402
+from tests.database_guard import assert_safe_test_database  # noqa: E402
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
-
-
-def _assert_safe_test_database(database_url: str) -> None:
-    url = make_url(database_url)
-    if url.drivername.startswith("sqlite"):
-        raise RuntimeError("Backend tests require PostgreSQL because migrations use PostgreSQL-specific types.")
-    if "test" not in (url.database or "").lower():
-        raise RuntimeError("Refusing to run backend tests against a database whose name does not contain 'test'.")
 
 
 @pytest.fixture(scope="session", autouse=True)
 def migrated_database() -> None:
     """Apply migrations to the configured PostgreSQL test database before tests run."""
 
-    _assert_safe_test_database(TEST_DATABASE_URL)
+    assert_safe_test_database(TEST_DATABASE_URL)
     alembic_config = Config(str(BACKEND_DIR / "alembic.ini"))
     alembic_config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
     command.upgrade(alembic_config, "head")
