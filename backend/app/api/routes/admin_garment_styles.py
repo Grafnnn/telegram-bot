@@ -6,6 +6,14 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from app.api.query_params import (
+    DEFAULT_PAGE_LIMIT,
+    CreatedAtSortQuery,
+    LimitQuery,
+    PageQuery,
+    TextSearchQuery,
+    apply_created_at_sort,
+)
 from app.api.deps import get_current_admin
 from app.database import get_db
 from app.models import Admin, GarmentStyle
@@ -33,8 +41,17 @@ def _ensure_style_name_available(db: Session, name: str, style_id: UUID | None =
 
 
 @router.get("", response_model=PaginatedResponse[GarmentStyleRead])
-def list_styles(search: str | None = None, status: GarmentStyleStatus | None = None, page: int = 1, limit: int = 20, _: Admin = Depends(get_current_admin), db: Session = Depends(get_db)):
-    stmt = select(GarmentStyle).order_by(GarmentStyle.created_at.desc())
+def list_styles(
+    search: TextSearchQuery = None,
+    status: GarmentStyleStatus | None = None,
+    page: PageQuery = 1,
+    limit: LimitQuery = DEFAULT_PAGE_LIMIT,
+    sort: CreatedAtSortQuery = "-created_at",
+    _: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    stmt = select(GarmentStyle)
+    stmt = apply_created_at_sort(stmt, GarmentStyle, sort)
     if search:
         like = f"%{search}%"
         stmt = stmt.where(or_(GarmentStyle.name.ilike(like), GarmentStyle.category.ilike(like)))
