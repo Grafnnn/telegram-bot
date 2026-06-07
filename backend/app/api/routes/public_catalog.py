@@ -1,12 +1,21 @@
 """Public catalog routes for the Telegram bot."""
 
-from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.api.query_params import (
+    DEFAULT_PAGE_LIMIT,
+    CreatedAtSortQuery,
+    LimitQuery,
+    NonNegativeDecimalQuery,
+    PageQuery,
+    ShortTextFilterQuery,
+    TextSearchQuery,
+    apply_created_at_sort,
+)
 from app.database import get_db
 from app.models import Fabric, GarmentStyle
 from app.schemas.common import PaginatedResponse
@@ -49,8 +58,25 @@ def recommend_fabrics(payload: FabricRecommendRequest, db: Session = Depends(get
 
 
 @router.get("/fabrics", response_model=PaginatedResponse[FabricRead])
-def list_public_fabrics(search: str | None = None, category: str | None = None, color: str | None = None, pattern: str | None = None, density: str | None = None, season: str | None = None, recommended_for: str | None = None, min_price: Decimal | None = None, max_price: Decimal | None = None, page: int = 1, limit: int = 20, db: Session = Depends(get_db)):
-    stmt = select(Fabric).options(selectinload(Fabric.images)).where(Fabric.status == "published").order_by(Fabric.created_at.desc())
+def list_public_fabrics(
+    search: TextSearchQuery = None,
+    category: ShortTextFilterQuery = None,
+    color: ShortTextFilterQuery = None,
+    pattern: ShortTextFilterQuery = None,
+    density: ShortTextFilterQuery = None,
+    season: ShortTextFilterQuery = None,
+    recommended_for: ShortTextFilterQuery = None,
+    min_price: NonNegativeDecimalQuery = None,
+    max_price: NonNegativeDecimalQuery = None,
+    page: PageQuery = 1,
+    limit: LimitQuery = DEFAULT_PAGE_LIMIT,
+    sort: CreatedAtSortQuery = "-created_at",
+    db: Session = Depends(get_db),
+):
+    if min_price is not None and max_price is not None and min_price > max_price:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "min_price должен быть меньше или равен max_price")
+    stmt = select(Fabric).options(selectinload(Fabric.images)).where(Fabric.status == "published")
+    stmt = apply_created_at_sort(stmt, Fabric, sort)
     if search:
         like = f"%{search}%"
         stmt = stmt.where(or_(Fabric.sku.ilike(like), Fabric.name.ilike(like), Fabric.category.ilike(like), Fabric.description_for_gpt.ilike(like)))
@@ -80,8 +106,14 @@ def get_public_fabric(fabric_id: UUID, db: Session = Depends(get_db)) -> Fabric:
 
 
 @router.get("/garment-styles", response_model=PaginatedResponse[GarmentStyleRead])
-def list_public_styles(page: int = 1, limit: int = 20, db: Session = Depends(get_db)):
-    stmt = select(GarmentStyle).where(GarmentStyle.status == "published").order_by(GarmentStyle.created_at.desc())
+def list_public_styles(
+    page: PageQuery = 1,
+    limit: LimitQuery = DEFAULT_PAGE_LIMIT,
+    sort: CreatedAtSortQuery = "-created_at",
+    db: Session = Depends(get_db),
+):
+    stmt = select(GarmentStyle).where(GarmentStyle.status == "published")
+    stmt = apply_created_at_sort(stmt, GarmentStyle, sort)
     items, total = paginate(db, stmt, page, limit)
     return {"items": items, "total": total, "page": page, "limit": limit}
 

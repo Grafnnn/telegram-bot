@@ -2,17 +2,26 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from app.api.query_params import (
+    DEFAULT_PAGE_LIMIT,
+    CreatedAtSortQuery,
+    LimitQuery,
+    PageQuery,
+    ShortTextFilterQuery,
+    TextSearchQuery,
+    apply_created_at_sort,
+)
 from app.api.deps import get_current_admin
 from app.database import get_db
 from app.models import Admin, Fabric, FabricImage, Generation
 from app.schemas.common import PaginatedResponse
 from app.schemas.fabric import FabricAIRequest, FabricCreate, FabricImageRead, FabricRead, FabricStatus, FabricUpdate, StockStatus
-from app.schemas.generation import GenerationRead
+from app.schemas.generation import GenerationRead, GenerationStatus
 from app.services.openai_service import check_fabric_card, generate_admin_fabric_description
 from app.services.storage_service import save_upload
 from app.utils.pagination import paginate
@@ -79,8 +88,20 @@ def ai_check_card(payload: FabricAIRequest, _: Admin = Depends(get_current_admin
 
 
 @router.get("/fabrics", response_model=PaginatedResponse[FabricRead])
-def list_fabrics(search: str | None = None, category: str | None = None, color: str | None = None, status: FabricStatus | None = None, stock_status: StockStatus | None = None, page: int = 1, limit: int = 20, _: Admin = Depends(get_current_admin), db: Session = Depends(get_db)):
-    stmt = select(Fabric).options(selectinload(Fabric.images)).order_by(Fabric.created_at.desc())
+def list_fabrics(
+    search: TextSearchQuery = None,
+    category: ShortTextFilterQuery = None,
+    color: ShortTextFilterQuery = None,
+    status: FabricStatus | None = None,
+    stock_status: StockStatus | None = None,
+    page: PageQuery = 1,
+    limit: LimitQuery = DEFAULT_PAGE_LIMIT,
+    sort: CreatedAtSortQuery = "-created_at",
+    _: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    stmt = select(Fabric).options(selectinload(Fabric.images))
+    stmt = apply_created_at_sort(stmt, Fabric, sort)
     stmt = _apply_fabric_filters(stmt, search, category, color, status, stock_status)
     items, total = paginate(db, stmt, page, limit)
     return {"items": items, "total": total, "page": page, "limit": limit}
@@ -177,7 +198,17 @@ def delete_fabric_image(fabric_id: UUID, image_id: UUID, _: Admin = Depends(get_
 
 
 @router.get("/generations", response_model=PaginatedResponse[GenerationRead])
-def list_generations(page: int = 1, limit: int = 20, _: Admin = Depends(get_current_admin), db: Session = Depends(get_db)):
-    stmt = select(Generation).order_by(Generation.created_at.desc())
+def list_generations(
+    generation_status: GenerationStatus | None = Query(default=None, alias="status"),
+    page: PageQuery = 1,
+    limit: LimitQuery = DEFAULT_PAGE_LIMIT,
+    sort: CreatedAtSortQuery = "-created_at",
+    _: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    stmt = select(Generation)
+    stmt = apply_created_at_sort(stmt, Generation, sort)
+    if generation_status:
+        stmt = stmt.where(Generation.status == generation_status)
     items, total = paginate(db, stmt, page, limit)
     return {"items": items, "total": total, "page": page, "limit": limit}
