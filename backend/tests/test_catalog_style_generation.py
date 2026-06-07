@@ -161,6 +161,7 @@ def test_catalog_style_generation_provider_error_is_normalized(client: TestClien
     fabric_id = _create_fabric()
     style_id = _create_style(with_mask=True)
     telegram_id = _create_user(selected_fabric_id=fabric_id, selected_garment_style_id=style_id)
+    log_messages: list[str] = []
 
     def fake_generate(
         base_image_path: str,
@@ -168,9 +169,17 @@ def test_catalog_style_generation_provider_error_is_normalized(client: TestClien
         mask_image_path: str | None,
         prompt: str,
     ) -> bytes:
-        raise RuntimeError("provider traceback with implementation details")
+        raise RuntimeError(
+            "provider traceback Authorization: Bearer provider-token password=hunter2 data:image/png;base64,"
+            + "A" * 120
+        )
 
     monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_catalog_style", fake_generate)
+    monkeypatch.setattr(
+        generation_routes.logger,
+        "warning",
+        lambda message, *args: log_messages.append(message % args),
+    )
     response = client.post(
         "/api/generations/catalog-style",
         headers=BOT_HEADERS,
@@ -181,6 +190,11 @@ def test_catalog_style_generation_provider_error_is_normalized(client: TestClien
     assert payload["status"] == "failed"
     assert payload["error_message"] == generation_routes.IMAGE_ERROR
     assert "traceback" not in payload["error_message"].lower()
+    log_text = "\n".join(log_messages)
+    assert "RuntimeError" in log_text
+    assert "provider-token" not in log_text
+    assert "hunter2" not in log_text
+    assert "data:image/png;base64" not in log_text
 
 
 def test_catalog_style_generation_saves_mocked_result(client: TestClient, monkeypatch) -> None:

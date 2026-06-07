@@ -13,6 +13,7 @@ from app.api_client import BackendAPIClient
 from app.config import get_settings
 from app.handler_utils import friendly_api_error_message, parse_callback_uuid
 from app.handlers.fabric_selection import upsert_message_user
+from app.redaction import safe_exception_summary
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -54,7 +55,7 @@ async def answer_style_card(message: Message, style: dict[str, Any]) -> None:
             await message.answer_photo(image_url, caption=text, reply_markup=keyboard)
             return
         except Exception as exc:
-            logger.warning("Could not send garment style image %s: %s", image_url, exc)
+            logger.warning("Could not send garment style image: %s", safe_exception_summary(exc))
     await message.answer(text, reply_markup=keyboard)
 
 
