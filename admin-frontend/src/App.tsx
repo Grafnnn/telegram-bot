@@ -4,6 +4,7 @@ import Layout from './components/Layout';
 import DashboardPage from './pages/DashboardPage';
 import FabricCreatePage from './pages/FabricCreatePage';
 import FabricEditPage from './pages/FabricEditPage';
+import FabricImportReviewPage from './pages/FabricImportReviewPage';
 import FabricsListPage from './pages/FabricsListPage';
 import GarmentStyleCreatePage from './pages/GarmentStyleCreatePage';
 import GarmentStyleEditPage from './pages/GarmentStyleEditPage';
@@ -25,8 +26,9 @@ export default function App() {
   let page = <DashboardPage navigate={navigate} />;
   if (route === '/dashboard') page = <DashboardPage navigate={navigate} />;
   if (route === '/fabrics') page = <FabricsListPage navigate={navigate} />;
+  if (route === '/fabrics/import') page = <FabricImportReviewPage navigate={navigate} />;
   if (route === '/fabrics/new') page = <FabricCreatePage navigate={navigate} />;
-  if (route.startsWith('/fabrics/') && route !== '/fabrics/new') page = <FabricEditPage id={route.split('/')[2] ?? ''} navigate={navigate} />;
+  if (route.startsWith('/fabrics/') && !['/fabrics/new', '/fabrics/import'].includes(route)) page = <FabricEditPage id={route.split('/')[2] ?? ''} navigate={navigate} />;
   if (route === '/garment-styles') page = <GarmentStylesListPage navigate={navigate} />;
   if (route === '/garment-styles/new') page = <GarmentStyleCreatePage navigate={navigate} />;
   if (route.startsWith('/garment-styles/') && route !== '/garment-styles/new') page = <GarmentStyleEditPage id={route.split('/')[2] ?? ''} navigate={navigate} />;
