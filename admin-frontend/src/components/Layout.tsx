@@ -9,6 +9,7 @@ export default function Layout({ children, navigate }: { children: ReactNode; na
         <h1 className="font-bold text-xl mb-4">Fashion Admin</h1>
         {item('Дашборд', '/dashboard')}
         {item('Ткани', '/fabrics')}
+        {item('Импорт тканей', '/fabrics/import')}
         {item('Фасоны', '/garment-styles')}
         {item('Генерации', '/generations')}
         <button type="button" className="block w-full text-left text-red-600" onClick={logout}>Выйти</button>
