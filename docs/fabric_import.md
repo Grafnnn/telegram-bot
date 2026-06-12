@@ -71,6 +71,34 @@ The preview may contain `"stock_status": "unknown"` when the source does not
 provide availability. Change this to a valid admin API value in the approved JSON
 before import.
 
+## Admin Import Review UI
+
+The admin frontend includes an import review screen:
+
+```text
+Admin -> Импорт тканей
+```
+
+Use it after a dry-run preview and before any staging import. The UI accepts a
+preview/approved JSON file or pasted JSON, supports both `{ "items": [...] }` and
+direct arrays, and reads rows from `normalized`, `raw`, or flat item objects.
+
+The review table lets an operator:
+
+- select rows for import;
+- edit `sku`, `name`, `category`, `price_per_meter`, and `stock_status`;
+- change `stock_status: unknown` to `in_stock`, `preorder`, or `out_of_stock`;
+- see duplicate SKU and missing required-field errors before import;
+- see missing image warnings before publication;
+- download a corrected approved JSON file.
+
+The UI imports selected valid rows through the existing admin API create
+endpoint. It does not write directly to the database.
+
+Import status is fixed to `draft`. There is no UI option to import rows as
+`published`; publication remains a separate admin review step after images and
+card readiness are confirmed.
+
 ## Approved Import To Staging
 
 Do not run this until an operator has reviewed and approved the JSON file.

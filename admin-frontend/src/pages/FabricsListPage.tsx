@@ -88,7 +88,10 @@ export default function FabricsListPage({ navigate }: { navigate: (path: string)
           <h1 className="text-3xl font-bold">Ткани</h1>
           <p className="text-slate-500">Каталог тканей для админки и Telegram-бота.</p>
         </div>
-        <button type="button" className="bg-slate-900 text-white" onClick={() => navigate('/fabrics/new')}>Добавить ткань</button>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="border bg-white" onClick={() => navigate('/fabrics/import')}>Import preview JSON</button>
+          <button type="button" className="bg-slate-900 text-white" onClick={() => navigate('/fabrics/new')}>Добавить ткань</button>
+        </div>
       </div>
 
       <form className="grid gap-3 rounded-xl bg-white p-4 shadow-sm md:grid-cols-6" onSubmit={submitFilters}>
