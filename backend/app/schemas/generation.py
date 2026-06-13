@@ -27,6 +27,25 @@ class CatalogStyleGenerationRequest(BaseModel):
     telegram_id: int
 
 
+class GenerationFabricRead(ORMModel):
+    id: UUID
+    sku: str
+    name: str
+    category: str
+
+
+class GenerationGarmentStyleRead(ORMModel):
+    id: UUID
+    name: str
+    category: str
+
+
+class GenerationTelegramUserRead(ORMModel):
+    id: UUID
+    telegram_id: int
+    username: str | None = None
+
+
 class GenerationRead(ORMModel):
     id: UUID
     telegram_user_id: UUID | None = None
@@ -40,3 +59,6 @@ class GenerationRead(ORMModel):
     error_message: str | None = None
     created_at: datetime
     updated_at: datetime
+    fabric: GenerationFabricRead | None = None
+    garment_style: GenerationGarmentStyleRead | None = None
+    telegram_user: GenerationTelegramUserRead | None = None
