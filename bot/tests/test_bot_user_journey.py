@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 from types import SimpleNamespace
 from uuid import uuid4
@@ -18,17 +19,34 @@ from app.handler_utils import (
     friendly_api_error_message,
     parse_callback_uuid,
 )
-from app.handlers import catalog, fallback, fabric_selection, selected, start
+from app.handlers import catalog, fallback, fabric_selection, selected, start, user_photo
+from app.states import TryOnPhotoStates
 from app.redaction import REDACTED, redact_mapping, safe_exception_summary, sanitize_log_message
 
 
 SECRET_TOKEN = "secret-token-value"
+PNG_1X1 = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+    b"\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+    b"\x00\x00\x00\rIDATx\x9cc\xf8\xff\xff?\x00\x05\xfe\x02"
+    b"\xfeA\xde\xa6\x9b\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
+class FakeBot:
+    async def get_file(self, file_id: str):
+        return SimpleNamespace(file_path=f"photos/{file_id}.jpg")
+
+    async def download_file(self, file_path: str):
+        return io.BytesIO(PNG_1X1)
 
 
 class FakeMessage:
-    def __init__(self, text: str | None = None) -> None:
+    def __init__(self, text: str | None = None, photo=None) -> None:
         self.text = text
         self.from_user = SimpleNamespace(id=1001, username="alice", first_name="Alice", last_name=None)
+        self.photo = photo
+        self.bot = FakeBot()
         self.answers: list[tuple[str, object | None]] = []
         self.photos: list[tuple[str, str, object | None]] = []
 
@@ -48,6 +66,27 @@ class FakeCallback:
 
     async def answer(self, text: str, show_alert: bool | None = None) -> None:
         self.answers.append((text, show_alert))
+
+
+class FakeState:
+    def __init__(self, data: dict | None = None) -> None:
+        self.data = data or {}
+        self.state = None
+        self.cleared = False
+
+    async def set_state(self, state) -> None:
+        self.state = state
+
+    async def update_data(self, **kwargs) -> None:
+        self.data.update(kwargs)
+
+    async def get_data(self):
+        return dict(self.data)
+
+    async def clear(self) -> None:
+        self.data.clear()
+        self.state = None
+        self.cleared = True
 
 
 class UnavailableClient:
@@ -84,6 +123,40 @@ class GenerationResultClient:
         self.result = result
 
     async def create_catalog_style_generation(self, telegram_id: int):
+        return self.result
+
+
+class TryOnSelectionClient:
+    def __init__(self) -> None:
+        self.fabric_id = str(uuid4())
+
+    async def upsert_user(self, **kwargs):
+        return {"ok": True}
+
+    async def select_fabric(self, telegram_id: int, fabric_id: str):
+        self.fabric_id = fabric_id
+        return {"ok": True}
+
+    async def get_selected_fabric(self, telegram_id: int):
+        return {
+            "fabric": {
+                "id": self.fabric_id,
+                "name": "Шелк молочный",
+                "sku": "SILK-001",
+            }
+        }
+
+
+class TryOnGenerationClient:
+    def __init__(self, result: dict | None) -> None:
+        self.result = result
+        self.calls: list[dict] = []
+
+    async def upsert_user(self, **kwargs):
+        return {"ok": True}
+
+    async def create_user_photo_generation(self, **kwargs):
+        self.calls.append(kwargs)
         return self.result
 
 
@@ -199,8 +272,68 @@ def test_generation_status_messages_are_safe(monkeypatch, result, expected_messa
     assert_no_secret_leak(message.answers[-1][0])
 
 
+def test_try_on_callback_sets_waiting_photo_state(monkeypatch) -> None:
+    client = TryOnSelectionClient()
+    monkeypatch.setattr(user_photo, "backend_client", lambda: client)
+    message = FakeMessage()
+    state = FakeState()
+    fabric_id = str(uuid4())
+    callback = FakeCallback(f"fabric:try_on:{fabric_id}", message)
+
+    run(user_photo.try_on_selected_fabric(callback, state))
+
+    assert callback.answers == [("Ткань выбрана для примерки.", False)]
+    assert state.state == TryOnPhotoStates.waiting_for_photo
+    assert state.data["fabric_id"] == fabric_id
+    assert state.data["fabric_sku"] == "SILK-001"
+    assert "Не отправляйте документы" in message.answers[-1][0]
+
+
+def test_try_on_non_photo_message_is_rejected_safely() -> None:
+    message = FakeMessage("не фото")
+
+    run(user_photo.reject_non_photo(message))
+
+    assert "Пожалуйста, отправьте фото" in message.answers[-1][0]
+    assert "Не отправляйте документы" in message.answers[-1][0]
+    assert_no_secret_leak(message.answers[-1][0])
+
+
+def test_try_on_photo_success_sends_generated_result(monkeypatch) -> None:
+    client = TryOnGenerationClient({"status": "completed", "result_image_url": "/uploads/generations/result.png"})
+    monkeypatch.setattr(user_photo, "backend_client", lambda: client)
+    fabric_id = str(uuid4())
+    state = FakeState({"fabric_id": fabric_id, "fabric_name": "Шелк молочный", "fabric_sku": "SILK-001"})
+    photo = [SimpleNamespace(file_id="low"), SimpleNamespace(file_id="high")]
+    message = FakeMessage(photo=photo)
+
+    run(user_photo.handle_try_on_photo(message, state))
+
+    assert client.calls
+    assert client.calls[0]["telegram_id"] == 1001
+    assert client.calls[0]["fabric_id"] == fabric_id
+    assert client.calls[0]["photo"] == PNG_1X1
+    assert state.state == TryOnPhotoStates.photo_ready
+    assert state.data["last_photo_file_id"] == "high"
+    assert message.photos
+    assert message.photos[-1][0].endswith("/uploads/generations/result.png")
+    assert "AI-примерка ткани" in message.photos[-1][1]
+
+
+def test_try_on_photo_failure_is_friendly_and_safe(monkeypatch) -> None:
+    client = TryOnGenerationClient({"status": "failed", "error_message": f"Traceback X-Bot-Token={SECRET_TOKEN}"})
+    monkeypatch.setattr(user_photo, "backend_client", lambda: client)
+    state = FakeState({"fabric_id": str(uuid4()), "fabric_name": "Шелк молочный", "fabric_sku": "SILK-001"})
+    message = FakeMessage(photo=[SimpleNamespace(file_id="high")])
+
+    run(user_photo.handle_try_on_photo(message, state))
+
+    assert message.answers[-1][0] == user_photo.GENERATION_UNAVAILABLE_MESSAGE
+    assert_no_secret_leak(message.answers[-1][0])
+
+
 def test_api_client_sends_internal_token_and_raises_controlled_errors(monkeypatch) -> None:
-    captured_headers: list[dict[str, str]] = []
+    captured_requests: list[tuple[str, str, dict[str, str]]] = []
 
     class FakeResponse:
         status = 200
@@ -225,14 +358,19 @@ def test_api_client_sends_internal_token_and_raises_controlled_errors(monkeypatc
             return None
 
         def request(self, method, url, headers=None, **kwargs):
-            captured_headers.append(headers or {})
+            captured_requests.append((method, url, headers or {}))
             return FakeResponse()
 
     monkeypatch.setattr("app.api_client.aiohttp.ClientSession", FakeSession)
 
     client = BackendAPIClient("http://backend:8000/api", bot_internal_token=SECRET_TOKEN)
     assert run(client.get_fabrics()) == []
-    assert captured_headers[0]["X-Bot-Token"] == SECRET_TOKEN
+    assert captured_requests[0][2]["X-Bot-Token"] == SECRET_TOKEN
+
+    assert run(client.create_user_photo_generation(1001, str(uuid4()), PNG_1X1)) == {"items": []}
+    assert captured_requests[-1][0] == "POST"
+    assert captured_requests[-1][1].endswith("/generations/user-photo")
+    assert captured_requests[-1][2]["X-Bot-Token"] == SECRET_TOKEN
 
     assert friendly_api_error_message(BackendAPIError(422, "/bot/users/1/selected-fabric")) == VALIDATION_MESSAGE
     assert_no_secret_leak(friendly_api_error_message(BackendAPIError(401, "/bot/users/1/selected-fabric")))

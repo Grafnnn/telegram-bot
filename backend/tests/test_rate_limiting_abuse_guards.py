@@ -11,6 +11,7 @@ from app.api.rate_limit import rate_limiter
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models.fabric import Fabric
+from app.models.fabric_image import FabricImage
 from app.models.telegram_user import TelegramUser
 
 BOT_HEADERS = {"X-Bot-Token": "test_bot_internal_token"}
@@ -77,6 +78,12 @@ def _create_fabric() -> str:
         db.add(fabric)
         db.commit()
         db.refresh(fabric)
+        image_url = f"/uploads/fabrics/{uuid4().hex}.png"
+        path = get_settings().upload_dir / image_url.removeprefix("/uploads/")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(PNG_1X1)
+        db.add(FabricImage(fabric_id=fabric.id, image_url=image_url, image_type="texture", sort_order=1))
+        db.commit()
         return str(fabric.id)
 
 

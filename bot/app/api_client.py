@@ -87,3 +87,17 @@ class BackendAPIClient:
 
     async def create_catalog_style_generation(self, telegram_id: int) -> dict | None:
         return await self._request("POST", "/generations/catalog-style", json={"telegram_id": telegram_id})
+
+    async def create_user_photo_generation(
+        self,
+        telegram_id: int,
+        fabric_id: str,
+        photo: bytes,
+        filename: str = "telegram-photo.jpg",
+        content_type: str = "image/jpeg",
+    ) -> dict | None:
+        form = aiohttp.FormData()
+        form.add_field("telegram_id", str(telegram_id))
+        form.add_field("fabric_id", fabric_id)
+        form.add_field("photo", photo, filename=filename, content_type=content_type)
+        return await self._request("POST", "/generations/user-photo", data=form)
