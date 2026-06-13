@@ -2,6 +2,7 @@ import { FabricPayload, StockStatus } from '../api/fabrics';
 
 export const IMPORT_STOCK_STATUS_VALUES = ['in_stock', 'preorder', 'out_of_stock'] as const;
 export type ImportStockStatus = (typeof IMPORT_STOCK_STATUS_VALUES)[number];
+export const EXISTING_SKU_ERROR = 'SKU уже существует в базе.';
 
 export type FabricImportRow = {
   id: string;
@@ -26,6 +27,10 @@ export type FabricImportRow = {
 
 type UnknownRecord = Record<string, unknown>;
 
+export type FabricImportValidationOptions = {
+  existingSkuKeys?: ReadonlySet<string>;
+};
+
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -40,6 +45,10 @@ function firstText(record: UnknownRecord, keys: string[]): string {
     if (value) return value;
   }
   return '';
+}
+
+export function normalizeSkuKey(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 function nestedRecord(item: UnknownRecord, key: string): UnknownRecord | null {
@@ -84,24 +93,27 @@ function normalizeStockStatus(value: unknown): FabricImportRow['stock_status'] {
 function duplicateSkus(rows: FabricImportRow[]): Set<string> {
   const counts = new Map<string, number>();
   rows.forEach((row) => {
-    const key = row.sku.trim().toLowerCase();
+    const key = normalizeSkuKey(row.sku);
     if (key) counts.set(key, (counts.get(key) ?? 0) + 1);
   });
   return new Set(Array.from(counts.entries()).filter(([, count]) => count > 1).map(([sku]) => sku));
 }
 
-export function validateFabricImportRows(rows: FabricImportRow[]): FabricImportRow[] {
+export function validateFabricImportRows(rows: FabricImportRow[], options: FabricImportValidationOptions = {}): FabricImportRow[] {
   const duplicates = duplicateSkus(rows);
+  const existingSkuKeys = options.existingSkuKeys ?? new Set<string>();
   return rows.map((row) => {
     const errors: string[] = [];
     const warnings = [...row.sourceWarnings];
+    const skuKey = normalizeSkuKey(row.sku);
     if (!row.sku.trim()) errors.push('SKU is required.');
     if (!row.name.trim()) errors.push('Name is required.');
     if (!row.category.trim()) errors.push('Category is required.');
     if (!IMPORT_STOCK_STATUS_VALUES.includes(row.stock_status as ImportStockStatus)) {
       errors.push('stock_status must be in_stock, preorder, or out_of_stock.');
     }
-    if (duplicates.has(row.sku.trim().toLowerCase())) errors.push('Duplicate SKU in this import file.');
+    if (duplicates.has(skuKey)) errors.push('Duplicate SKU in this import file.');
+    if (skuKey && existingSkuKeys.has(skuKey)) errors.push(EXISTING_SKU_ERROR);
     if (!row.price_per_meter.trim()) warnings.push('Missing price_per_meter.');
     if (!row.description_for_gpt.trim()) warnings.push('Missing description_for_gpt.');
     if (row.imageCount === 0) warnings.push('Missing images; main and texture are required before publication.');
@@ -139,13 +151,13 @@ function rowFromItem(item: UnknownRecord, index: number): FabricImportRow {
   };
 }
 
-export function parseFabricImportJson(input: string): FabricImportRow[] {
+export function parseFabricImportJson(input: string, options: FabricImportValidationOptions = {}): FabricImportRow[] {
   const parsed: unknown = JSON.parse(input);
   const rawItems = isRecord(parsed) && Array.isArray(parsed.items) ? parsed.items : Array.isArray(parsed) ? parsed : null;
   if (!rawItems) throw new Error('Import JSON must be an array or an object with an items array.');
   const rows = rawItems.filter(isRecord).map(rowFromItem);
   if (rows.length === 0) throw new Error('Import JSON does not contain fabric rows.');
-  return validateFabricImportRows(rows);
+  return validateFabricImportRows(rows, options);
 }
 
 function numberOrNull(value: string): number | null {
