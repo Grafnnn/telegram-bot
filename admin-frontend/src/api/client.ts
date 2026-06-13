@@ -10,7 +10,26 @@ export type Fabric = {
   id: string; sku: string; name: string; category: string; composition?: string | null; color?: string | null; shade?: string | null; pattern?: string | null; texture?: string | null; density?: string | null; stretch?: string | null; opacity?: string | null; shine?: string | null; season?: string[] | null; recommended_for?: string[] | null; not_recommended_for?: string[] | null; price_per_meter?: string | number | null; currency: string; stock_status: StockStatus; stock_quantity?: string | number | null; short_description?: string | null; full_description?: string | null; description_for_gpt?: string | null; tags?: string[] | null; status: FabricStatus; images: FabricImage[]; created_at?: string; updated_at?: string;
 };
 export type GarmentStyle = { id: string; name: string; category: string; status: string; description?: string | null; compatible_fabric_categories?: string[] | null; base_image_url?: string | null; mask_image_url?: string | null; created_at?: string; updated_at?: string };
-export type Generation = { id: string; mode: string; status: string; error_message?: string | null; created_at: string };
+export type GenerationFabric = { id: string; sku: string; name: string; category: string };
+export type GenerationGarmentStyle = { id: string; name: string; category: string };
+export type GenerationTelegramUser = { id: string; telegram_id: number; username?: string | null };
+export type Generation = {
+  id: string;
+  telegram_user_id?: string | null;
+  fabric_id?: string | null;
+  garment_style_id?: string | null;
+  user_photo_url?: string | null;
+  result_image_url?: string | null;
+  mode: string;
+  prompt?: string | null;
+  status: string;
+  error_message?: string | null;
+  created_at: string;
+  updated_at?: string;
+  fabric?: GenerationFabric | null;
+  garment_style?: GenerationGarmentStyle | null;
+  telegram_user?: GenerationTelegramUser | null;
+};
 
 export class AdminApiError extends Error {
   constructor(public readonly status: number, message: string) {
