@@ -5,11 +5,14 @@ from __future__ import annotations
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models.fabric import Fabric
 from app.models.fabric_image import FabricImage
+from app.models.generation import Generation
+from app.models.telegram_user import TelegramUser
 
 BOT_HEADERS = {"X-Bot-Token": "test_bot_internal_token"}
 WRONG_BOT_HEADERS = {"X-Bot-Token": "wrong"}
@@ -56,17 +59,29 @@ def _create_fabric(with_texture: bool = True, status: str = "published") -> str:
         return str(fabric.id)
 
 
+def _create_telegram_user() -> int:
+    telegram_id = 700_000_000 + uuid4().int % 1_000_000
+    with SessionLocal() as db:
+        db.add(TelegramUser(telegram_id=telegram_id, username="photo_user"))
+        db.commit()
+    return telegram_id
+
+
 def _post_user_photo(
     client: TestClient,
     fabric_id: str,
     content: bytes,
     content_type: str,
     headers: dict[str, str] | None = None,
+    telegram_id: int | None = None,
 ):
+    data = {"fabric_id": fabric_id}
+    if telegram_id is not None:
+        data["telegram_id"] = str(telegram_id)
     return client.post(
         "/api/generations/user-photo",
         headers=headers,
-        data={"fabric_id": fabric_id},
+        data=data,
         files={"photo": ("photo.png", content, content_type)},
     )
 
@@ -87,11 +102,51 @@ def test_user_photo_generation_accepts_valid_image_with_internal_token(client: T
 
 def test_user_photo_generation_requires_texture_image(client: TestClient) -> None:
     fabric_id = _create_fabric(with_texture=False)
+    telegram_id = _create_telegram_user()
 
-    response = _post_user_photo(client, fabric_id, PNG_1X1, "image/png", BOT_HEADERS)
+    response = _post_user_photo(client, fabric_id, PNG_1X1, "image/png", BOT_HEADERS, telegram_id=telegram_id)
 
     assert response.status_code == 400, response.text
     assert "texture image" in response.json()["detail"]
+    admin_response = client.get("/api/admin/generations?status=failed", headers=_admin_headers(client))
+    assert admin_response.status_code == 200, admin_response.text
+    admin_payload = admin_response.json()
+    assert admin_payload["total"] == 1
+    [admin_generation] = admin_payload["items"]
+    assert admin_generation["mode"] == "user_photo"
+    assert admin_generation["status"] == "failed"
+    assert admin_generation["fabric_id"] == fabric_id
+    assert admin_generation["fabric"]["name"] == "User photo fabric"
+    assert admin_generation["telegram_user"]["telegram_id"] == telegram_id
+    assert "texture image" in admin_generation["error_message"]
+
+
+def test_user_photo_generation_unpublished_fabric_persists_failed_record(client: TestClient) -> None:
+    fabric_id = _create_fabric(status="draft")
+    telegram_id = _create_telegram_user()
+
+    response = _post_user_photo(client, fabric_id, PNG_1X1, "image/png", BOT_HEADERS,  telegram_id=telegram_id)
+
+    assert response.status_code == 400, response.text
+    assert "оопубликован" in response.json()["detail"]
+    admin_response = client.get("/api/admin/generations?status=failed", headers=_admin_headers(client))
+    assert admin_response.status_code == 200, admin_response.text
+    admin_payload = admin_response.json()
+    assert admin_payload["total"] == 1
+    [admin_generation] = admin_payload["items"]
+    assert admin_generation["fabric_id"] == fabric_id
+    assert admin_generation["telegram_user"]["telegram_id"] == telegram_id
+    assert "опубликован" in admin_generation["error_message"]
+
+
+def test_user_photo_generation_missing_fabric_does_not_create_record(client: TestClient) -> None:
+    telegram_id = _create_telegram_user()
+
+    response = _post_user_photo(client, str(uuid4()), PNG_1X1, "image/png", BOT_HEADERS, telegram_id=telegram_id)
+
+    assert response.status_code == 404, response.text
+    with SessionLocal() as db:
+        assert db.scalar(select(Generation)) is None
 
 
 def test_user_photo_generation_saves_mocked_result(client: TestClient, monkeypatch) -> None:
@@ -174,6 +229,8 @@ def test_user_photo_generation_requires_internal_token(client: TestClient) -> No
     response = _post_user_photo(client, str(uuid4()), PNG_1X1, "image/png")
 
     assert response.status_code == 401, response.text
+    with SessionLocal() as db:
+        assert db.scalar(select(Generation)) is None
 
 
 def test_user_photo_generation_rejects_invalid_internal_token(client: TestClient) -> None:
@@ -210,7 +267,15 @@ def test_user_photo_generation_rejects_empty_upload(client: TestClient) -> None:
 
 def test_user_photo_generation_rejects_invalid_image_content(client: TestClient) -> None:
     fabric_id = _create_fabric()
+    telegram_id = _create_telegram_user()
 
-    response = _post_user_photo(client, fabric_id, b"not an image", "image/png", BOT_HEADERS)
+    response = _post_user_photo(client, fabric_id, b"not an image", "image/png", BOT_HEADERS, telegram_id=telegram_id)
 
     assert response.status_code == 400, response.text
+    admin_response = client.get("/api/admin/generations?status=failed", headers=_admin_headers(client))
+    assert admin_response.status_code == 200, admin_response.text
+    [admin_generation] = admin_response.json()["items"]
+    assert admin_generation["fabric_id"] == fabric_id
+    assert admin_generation["telegram_user"]["telegram_id"] == telegram_id
+    assert admin_generation["user_photo_url"] is None
+    assert "корректное изображение" in admin_generation["error_message"]

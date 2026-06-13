@@ -12,6 +12,18 @@ from app.redaction import safe_exception_summary, safe_path_for_log
 logger = logging.getLogger(__name__)
 
 
+def image_upload_metadata(content: bytes) -> tuple[str, str]:
+    """Return a safe filename/content-type pair matching the uploaded image bytes."""
+
+    if content.startswith(b"\xff\xd8\xff"):
+        return "telegram-photo.jpg", "image/jpeg"
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "telegram-photo.png", "image/png"
+    if len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        return "telegram-photo.webp", "image/webp"
+    return "telegram-photo.jpg", "image/jpeg"
+
+
 class BackendAPIError(RuntimeError):
     """Controlled backend error surfaced to bot handlers."""
 
@@ -93,11 +105,17 @@ class BackendAPIClient:
         telegram_id: int,
         fabric_id: str,
         photo: bytes,
-        filename: str = "telegram-photo.jpg",
-        content_type: str = "image/jpeg",
+        filename: str | None = None,
+        content_type: str | None = None,
     ) -> dict | None:
+        inferred_filename, inferred_content_type = image_upload_metadata(photo)
         form = aiohttp.FormData()
         form.add_field("telegram_id", str(telegram_id))
         form.add_field("fabric_id", fabric_id)
-        form.add_field("photo", photo, filename=filename, content_type=content_type)
+        form.add_field(
+            "photo",
+            photo,
+            filename=filename or inferred_filename,
+            content_type=content_type or inferred_content_type,
+        )
         return await self._request("POST", "/generations/user-photo", data=form)
