@@ -48,6 +48,7 @@ export default function FabricImportReviewPage({ navigate }: { navigate: (path: 
   const [success, setSuccess] = useState('');
   const [result, setResult] = useState<ImportResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [importConfirmed, setImportConfirmed] = useState(false);
 
   const selectedRows = useMemo(() => rows.filter((row) => row.selected), [rows]);
   const importableRows = useMemo(() => selectedRows.filter((row) => row.errors.length === 0), [selectedRows]);
@@ -56,6 +57,7 @@ export default function FabricImportReviewPage({ navigate }: { navigate: (path: 
 
   function applyRows(nextRows: FabricImportRow[]) {
     setRows(validateFabricImportRows(nextRows));
+    setImportConfirmed(false);
     setResult(null);
     setSuccess('');
   }
@@ -63,6 +65,7 @@ export default function FabricImportReviewPage({ navigate }: { navigate: (path: 
   function parseInput(text = sourceText) {
     setError('');
     setResult(null);
+    setImportConfirmed(false);
     try {
       const nextRows = parseFabricImportJson(text);
       setRows(nextRows);
@@ -78,6 +81,7 @@ export default function FabricImportReviewPage({ navigate }: { navigate: (path: 
     const file = event.target.files?.[0];
     if (!file) return;
     setError('');
+    setImportConfirmed(false);
     const text = await file.text();
     setSourceText(text);
     parseInput(text);
@@ -103,6 +107,10 @@ export default function FabricImportReviewPage({ navigate }: { navigate: (path: 
       setError('Исправьте ошибки в выбранных строках перед импортом.');
       return;
     }
+    if (!importConfirmed) {
+      setError('Подтвердите создание выбранных строк как черновиков перед импортом.');
+      return;
+    }
     setBusy(true);
     const nextResult: ImportResult = { created: 0, skipped: 0, rows: [] };
     for (const row of importableRows) {
@@ -117,6 +125,7 @@ export default function FabricImportReviewPage({ navigate }: { navigate: (path: 
     }
     setResult(nextResult);
     setSuccess(`Импорт завершён. Создано: ${nextResult.created}. Ошибок/пропусков: ${nextResult.skipped}.`);
+    setImportConfirmed(false);
     setBusy(false);
   }
 
@@ -126,6 +135,7 @@ export default function FabricImportReviewPage({ navigate }: { navigate: (path: 
     setError('');
     setSuccess('');
     setResult(null);
+    setImportConfirmed(false);
   }
 
   function downloadCorrectedJson() {
@@ -158,7 +168,15 @@ export default function FabricImportReviewPage({ navigate }: { navigate: (path: 
         </div>
         <label>
           Вставить JSON вручную
-          <textarea rows={8} value={sourceText} onChange={(event) => setSourceText(event.target.value)} placeholder='{"items":[{"normalized":{"sku":"...","name":"...","category":"...","stock_status":"preorder"}}]}' />
+          <textarea
+            rows={8}
+            value={sourceText}
+            onChange={(event) => {
+              setSourceText(event.target.value);
+              setImportConfirmed(false);
+            }}
+            placeholder='{"items":[{"normalized":{"sku":"...","name":"...","category":"...","stock_status":"preorder"}}]}'
+          />
         </label>
         <div className="flex flex-wrap gap-3">
           <button type="button" className="bg-slate-900 text-white" onClick={() => parseInput()} disabled={!sourceText.trim() || busy}>Validate</button>
@@ -177,9 +195,24 @@ export default function FabricImportReviewPage({ navigate }: { navigate: (path: 
               <h2 className="text-xl font-semibold">Review table</h2>
               <p className="text-sm text-slate-500">Выбрано {selectedRows.length}, готово к импорту {importableRows.length}. Missing images остаются предупреждением: фото нужны перед публикацией.</p>
             </div>
-            <button type="button" className="bg-green-700 text-white disabled:opacity-50" disabled={busy || importableRows.length === 0 || hasSelectedInvalidRows} onClick={importSelected}>
-              {busy ? 'Импорт...' : 'Import selected as drafts'}
-            </button>
+            <div className="flex max-w-xl flex-col items-start gap-3">
+              <label className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  style={{ width: 'auto' }}
+                  checked={importConfirmed}
+                  disabled={busy || importableRows.length === 0 || hasSelectedInvalidRows}
+                  onChange={(event) => setImportConfirmed(event.target.checked)}
+                />
+                <span>
+                  Я понимаю, что выбранные строки будут созданы в staging как черновики.
+                  <span className="mt-1 block text-xs text-slate-500">Импорт остаётся draft-only; предупреждения по изображениям нужно закрыть перед публикацией.</span>
+                </span>
+              </label>
+              <button type="button" className="bg-green-700 text-white disabled:opacity-50" disabled={busy || importableRows.length === 0 || hasSelectedInvalidRows || !importConfirmed} onClick={importSelected}>
+                {busy ? 'Импорт...' : 'Import selected as drafts'}
+              </button>
+            </div>
           </div>
 
           <div className="overflow-x-auto">
