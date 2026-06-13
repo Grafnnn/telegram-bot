@@ -5,3 +5,8 @@ from aiogram.fsm.state import State, StatesGroup
 
 class PickFabricStates(StatesGroup):
     waiting_for_description = State()
+
+
+class TryOnPhotoStates(StatesGroup):
+    waiting_for_photo = State()
+    photo_ready = State()

@@ -18,9 +18,22 @@ def main_menu() -> ReplyKeyboardMarkup:
 
 def select_fabric_keyboard(fabric_id: str, source: str = "fabric") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="Выбрать эту ткань", callback_data=f"{source}:select:{fabric_id}")]]
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Выбрать эту ткань", callback_data=f"{source}:select:{fabric_id}")],
+            [InlineKeyboardButton(text="🪄 Примерить на моём фото", callback_data=f"{source}:try_on:{fabric_id}")],
+        ]
     )
 
 
 def pick_fabric_keyboard(fabric_id: str) -> InlineKeyboardMarkup:
     return select_fabric_keyboard(fabric_id, "pick")
+
+
+def try_on_result_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔁 Сгенерировать ещё раз", callback_data="try_on:regenerate")],
+            [InlineKeyboardButton(text="📸 Загрузить другое фото", callback_data="try_on:upload_another")],
+            [InlineKeyboardButton(text="🧵 Выбрать другую ткань", callback_data="try_on:catalog")],
+        ]
+    )

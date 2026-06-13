@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.api.rate_limit import rate_limit_catalog_style_generation, rate_limit_user_photo_generation
 from app.api.deps import verify_bot_internal_token
-from app.config import MissingOpenAIKeyError, get_settings
+from app.config import MissingOpenAIKeyError
 from app.database import get_db
 from app.models import Fabric, GarmentStyle, Generation, TelegramUser
 from app.schemas.generation import (
@@ -21,7 +21,7 @@ from app.schemas.generation import (
     GenerationRead,
 )
 from app.services import image_generation_service
-from app.services.image_generation_service import IMAGE_ERROR, IMAGE_EDIT_PROMPT
+from app.services.image_generation_service import IMAGE_ERROR, IMAGE_EDIT_PROMPT, USER_PHOTO_EDIT_PROMPT
 from app.services.storage_service import resolve_upload_path, save_generated_image, save_upload
 from app.utils.redaction import safe_exception_summary
 
@@ -49,6 +49,15 @@ def _selected_published_fabric(db: Session, user: TelegramUser) -> Fabric:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Сначала выберите ткань.")
     fabric = db.scalar(select(Fabric).options(selectinload(Fabric.images)).where(Fabric.id == user.selected_fabric_id))
     if fabric is None or fabric.status != "published":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Выбранная ткань не найдена или больше не опубликована.")
+    return fabric
+
+
+def _published_fabric_or_404(db: Session, fabric_id: UUID) -> Fabric:
+    fabric = db.scalar(select(Fabric).options(selectinload(Fabric.images)).where(Fabric.id == fabric_id))
+    if fabric is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ткань не найдена")
+    if fabric.status != "published":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Выбранная ткань не найдена или больше не опубликована.")
     return fabric
 
@@ -81,6 +90,17 @@ def _build_catalog_style_prompt(fabric: Fabric, style: GarmentStyle) -> str:
         details.append(f"Fabric description: {fabric.description_for_gpt}")
     if style.description:
         details.append(f"Garment style description: {style.description}")
+    return "\n".join(details)
+
+
+def _build_user_photo_prompt(fabric: Fabric) -> str:
+    details = [USER_PHOTO_EDIT_PROMPT, f"Selected fabric id: {fabric.id}."]
+    if fabric.description_for_gpt:
+        details.append(f"Fabric description: {fabric.description_for_gpt}")
+    if fabric.category:
+        details.append(f"Fabric category: {fabric.category}")
+    if fabric.color:
+        details.append(f"Fabric color: {fabric.color}")
     return "\n".join(details)
 
 
@@ -181,20 +201,57 @@ def create_catalog_style_generation(
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(verify_bot_internal_token), Depends(rate_limit_user_photo_generation)],
 )
-async def create_user_photo_generation(telegram_user_id: UUID | None = Form(None), fabric_id: UUID = Form(...), photo: UploadFile = File(...), db: Session = Depends(get_db)) -> Generation:
-    if db.get(Fabric, fabric_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ткань не найдена")
+async def create_user_photo_generation(
+    telegram_id: int | None = Form(None),
+    telegram_user_id: UUID | None = Form(None),
+    fabric_id: UUID = Form(...),
+    photo: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> Generation:
+    return await _create_user_photo_generation(telegram_id, telegram_user_id, fabric_id, photo, db)
+
+
+async def _create_user_photo_generation(
+    telegram_id: int | None,
+    telegram_user_id: UUID | None,
+    fabric_id: UUID,
+    photo: UploadFile,
+    db: Session,
+) -> Generation:
+    linked_user_id = telegram_user_id
+    if telegram_id is not None:
+        linked_user_id = _telegram_user_or_404(db, telegram_id).id
+    fabric = _published_fabric_or_404(db, fabric_id)
+    texture_url = _texture_image_url(fabric)
+    texture_path = resolve_upload_path(texture_url)
     photo_url = await save_upload(photo, "user-photos")
-    configured = get_settings().is_openai_configured
+    photo_path = resolve_upload_path(photo_url)
+    prompt = _build_user_photo_prompt(fabric)
     generation = Generation(
-        telegram_user_id=telegram_user_id,
+        telegram_user_id=linked_user_id,
         fabric_id=fabric_id,
         user_photo_url=photo_url,
         mode="user_photo",
-        status=GENERATION_STATUS_PENDING if configured else GENERATION_STATUS_FAILED,
-        error_message=None if configured else IMAGE_ERROR,
+        prompt=prompt,
+        status=GENERATION_STATUS_PROCESSING,
     )
     db.add(generation)
+    db.commit()
+    db.refresh(generation)
+    try:
+        image_bytes = image_generation_service.generate_fabric_on_user_photo(
+            str(photo_path),
+            str(texture_path),
+            prompt,
+        )
+        _mark_generation_completed(generation, image_bytes)
+    except Exception as exc:
+        _mark_generation_failed(generation, exc)
+        logger.warning(
+            "User photo generation failed generation_id=%s error=%s",
+            generation.id,
+            safe_exception_summary(exc),
+        )
     db.commit()
     db.refresh(generation)
     return generation

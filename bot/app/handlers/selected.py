@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.handler_utils import friendly_api_error_message
 from app.handlers.fabric_selection import fabric_image_url, format_fabric_card
 from app.handlers.garment_styles import format_style_card, style_image_url
+from app.keyboards import select_fabric_keyboard
 
 router = Router()
 GENERATION_CALLBACK = "generation:create_catalog_style"
@@ -70,7 +71,12 @@ async def selected_items(message: Message) -> None:
         await message.answer("Вы пока не выбрали ткань или фасон.")
         return
     if fabric:
-        await answer_photo_or_text(message, fabric_image_url(fabric), "Ваша выбранная ткань:\n" + format_fabric_card(fabric))
+        await answer_photo_or_text(
+            message,
+            fabric_image_url(fabric),
+            "Ваша выбранная ткань:\n" + format_fabric_card(fabric),
+            reply_markup=select_fabric_keyboard(str(fabric.get("id")), "fabric"),
+        )
     else:
         await message.answer("Вы пока не выбрали ткань.")
     if style:
