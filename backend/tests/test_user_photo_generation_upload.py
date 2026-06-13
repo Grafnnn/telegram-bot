@@ -22,6 +22,12 @@ PNG_1X1 = (
 )
 
 
+def _admin_headers(client: TestClient) -> dict[str, str]:
+    response = client.post("/api/auth/login", json={"email": "admin@example.com", "password": "admin12345"})
+    assert response.status_code == 200, response.text
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
 def _write_upload(relative_url: str) -> None:
     path = get_settings().upload_dir / relative_url.removeprefix("/uploads/")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -109,6 +115,20 @@ def test_user_photo_generation_saves_mocked_result(client: TestClient, monkeypat
     assert payload["result_image_url"].startswith("/uploads/generations/")
     assert (get_settings().upload_dir / payload["result_image_url"].removeprefix("/uploads/")).exists()
 
+    admin_response = client.get("/api/admin/generations?status=completed", headers=_admin_headers(client))
+    assert admin_response.status_code == 200, admin_response.text
+    admin_payload = admin_response.json()
+    assert admin_payload["total"] == 1
+    [admin_generation] = admin_payload["items"]
+    assert admin_generation["id"] == payload["id"]
+    assert admin_generation["mode"] == "user_photo"
+    assert admin_generation["status"] == "completed"
+    assert admin_generation["user_photo_url"].startswith("/uploads/user-photos/")
+    assert admin_generation["result_image_url"] == payload["result_image_url"]
+    assert admin_generation["fabric"]["sku"].startswith("PHOTO-")
+    assert admin_generation["fabric"]["name"] == "User photo fabric"
+    assert admin_generation["fabric"]["category"] == "cotton"
+
 
 def test_user_photo_generation_provider_error_is_normalized(client: TestClient, monkeypatch) -> None:
     from app.api.routes import generations as generation_routes
@@ -136,6 +156,13 @@ def test_user_photo_generation_provider_error_is_normalized(client: TestClient, 
     assert payload["status"] == "failed"
     assert payload["error_message"] == generation_routes.IMAGE_ERROR
     assert "traceback" not in payload["error_message"].lower()
+    admin_response = client.get("/api/admin/generations?status=failed", headers=_admin_headers(client))
+    assert admin_response.status_code == 200, admin_response.text
+    [admin_generation] = admin_response.json()["items"]
+    assert admin_generation["id"] == payload["id"]
+    assert admin_generation["status"] == "failed"
+    assert admin_generation["error_message"] == generation_routes.IMAGE_ERROR
+    assert admin_generation["fabric"]["name"] == "User photo fabric"
     log_text = "\n".join(log_messages)
     assert "RuntimeError" in log_text
     assert "provider-token" not in log_text

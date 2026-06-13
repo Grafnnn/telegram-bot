@@ -215,7 +215,11 @@ def list_generations(
     _: Admin = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
-    stmt = select(Generation)
+    stmt = select(Generation).options(
+        selectinload(Generation.fabric),
+        selectinload(Generation.garment_style),
+        selectinload(Generation.telegram_user),
+    )
     stmt = apply_created_at_sort(stmt, Generation, sort)
     if generation_status:
         stmt = stmt.where(Generation.status == generation_status)
