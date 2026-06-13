@@ -1,10 +1,12 @@
 import { ChangeEvent, useMemo, useState } from 'react';
-import { createFabric } from '../api/fabrics';
+import { createFabric, getFabrics } from '../api/fabrics';
 import {
   buildCorrectedApprovedJson,
   buildDraftFabricPayload,
+  EXISTING_SKU_ERROR,
   FabricImportRow,
   IMPORT_STOCK_STATUS_VALUES,
+  normalizeSkuKey,
   parseFabricImportJson,
   validateFabricImportRows,
 } from '../utils/fabricImportReview';
@@ -22,6 +24,8 @@ const STOCK_LABELS: Record<string, string> = {
   unknown: 'Нужно выбрать',
   '': 'Нужно выбрать',
 };
+
+const SKU_PREFLIGHT_PAGE_LIMIT = 100;
 
 function errorSummary(rows: FabricImportRow[]): string {
   const invalid = rows.filter((row) => row.errors.length > 0).length;
@@ -41,6 +45,21 @@ function downloadText(filename: string, text: string) {
   URL.revokeObjectURL(url);
 }
 
+async function loadExistingSkuKeys(): Promise<Set<string>> {
+  const skuKeys = new Set<string>();
+  let page = 1;
+  while (true) {
+    const data = await getFabrics({ page, limit: SKU_PREFLIGHT_PAGE_LIMIT });
+    data.items.forEach((fabric) => {
+      const key = normalizeSkuKey(fabric.sku);
+      if (key) skuKeys.add(key);
+    });
+    if (data.items.length === 0 || page * data.limit >= data.total) break;
+    page += 1;
+  }
+  return skuKeys;
+}
+
 export default function FabricImportReviewPage({ navigate }: { navigate: (path: string) => void }) {
   const [sourceText, setSourceText] = useState('');
   const [rows, setRows] = useState<FabricImportRow[]>([]);
@@ -49,31 +68,53 @@ export default function FabricImportReviewPage({ navigate }: { navigate: (path: 
   const [result, setResult] = useState<ImportResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [importConfirmed, setImportConfirmed] = useState(false);
+  const [existingSkuKeys, setExistingSkuKeys] = useState<Set<string>>(() => new Set());
+  const [skuCheckLoading, setSkuCheckLoading] = useState(false);
+  const [skuCheckError, setSkuCheckError] = useState('');
 
   const selectedRows = useMemo(() => rows.filter((row) => row.selected), [rows]);
   const importableRows = useMemo(() => selectedRows.filter((row) => row.errors.length === 0), [selectedRows]);
   const hasRows = rows.length > 0;
   const hasSelectedInvalidRows = selectedRows.some((row) => row.errors.length > 0);
+  const importBlockedBySkuCheck = skuCheckLoading || Boolean(skuCheckError);
+  const hasExistingSkuConflicts = rows.some((row) => row.errors.includes(EXISTING_SKU_ERROR));
 
-  function applyRows(nextRows: FabricImportRow[]) {
-    setRows(validateFabricImportRows(nextRows));
+  function applyRows(nextRows: FabricImportRow[], skuKeys = existingSkuKeys) {
+    setRows(validateFabricImportRows(nextRows, { existingSkuKeys: skuKeys }));
     setImportConfirmed(false);
     setResult(null);
     setSuccess('');
   }
 
-  function parseInput(text = sourceText) {
+  async function parseInput(text = sourceText) {
     setError('');
     setResult(null);
     setImportConfirmed(false);
+    setSkuCheckError('');
+    let parsedRows: FabricImportRow[];
     try {
-      const nextRows = parseFabricImportJson(text);
-      setRows(nextRows);
-      setSuccess(errorSummary(nextRows));
+      parsedRows = parseFabricImportJson(text);
     } catch (err) {
       setRows([]);
       setSuccess('');
       setError(err instanceof Error ? err.message : 'Не удалось прочитать JSON.');
+      return;
+    }
+
+    setRows(parsedRows);
+    setSuccess(errorSummary(parsedRows));
+    setSkuCheckLoading(true);
+    try {
+      const nextSkuKeys = await loadExistingSkuKeys();
+      const checkedRows = validateFabricImportRows(parsedRows, { existingSkuKeys: nextSkuKeys });
+      setExistingSkuKeys(nextSkuKeys);
+      setRows(checkedRows);
+      setSuccess(errorSummary(checkedRows));
+    } catch {
+      setSkuCheckError('Не удалось проверить существующие SKU. Импорт временно заблокирован до повторной проверки.');
+      setSuccess('');
+    } finally {
+      setSkuCheckLoading(false);
     }
   }
 
@@ -84,7 +125,28 @@ export default function FabricImportReviewPage({ navigate }: { navigate: (path: 
     setImportConfirmed(false);
     const text = await file.text();
     setSourceText(text);
-    parseInput(text);
+    void parseInput(text);
+  }
+
+  async function retrySkuPreflight() {
+    if (!hasRows) return;
+    setError('');
+    setSkuCheckError('');
+    setSkuCheckLoading(true);
+    try {
+      const nextSkuKeys = await loadExistingSkuKeys();
+      const checkedRows = validateFabricImportRows(rows, { existingSkuKeys: nextSkuKeys });
+      setExistingSkuKeys(nextSkuKeys);
+      setRows(checkedRows);
+      setSuccess(errorSummary(checkedRows));
+      setResult(null);
+      setImportConfirmed(false);
+    } catch {
+      setSkuCheckError('Не удалось проверить существующие SKU. Импорт временно заблокирован до повторной проверки.');
+      setSuccess('');
+    } finally {
+      setSkuCheckLoading(false);
+    }
   }
 
   function updateRow<K extends keyof FabricImportRow>(id: string, field: K, value: FabricImportRow[K]) {
@@ -105,6 +167,14 @@ export default function FabricImportReviewPage({ navigate }: { navigate: (path: 
     }
     if (hasSelectedInvalidRows) {
       setError('Исправьте ошибки в выбранных строках перед импортом.');
+      return;
+    }
+    if (skuCheckLoading) {
+      setError('Дождитесь завершения проверки SKU в базе.');
+      return;
+    }
+    if (skuCheckError) {
+      setError(skuCheckError);
       return;
     }
     if (!importConfirmed) {
@@ -136,6 +206,8 @@ export default function FabricImportReviewPage({ navigate }: { navigate: (path: 
     setSuccess('');
     setResult(null);
     setImportConfirmed(false);
+    setSkuCheckError('');
+    setSkuCheckLoading(false);
   }
 
   function downloadCorrectedJson() {
@@ -179,10 +251,18 @@ export default function FabricImportReviewPage({ navigate }: { navigate: (path: 
           />
         </label>
         <div className="flex flex-wrap gap-3">
-          <button type="button" className="bg-slate-900 text-white" onClick={() => parseInput()} disabled={!sourceText.trim() || busy}>Validate</button>
-          <button type="button" className="border bg-white" onClick={downloadCorrectedJson} disabled={!hasRows || busy}>Download corrected approved JSON</button>
+          <button type="button" className="bg-slate-900 text-white" onClick={() => void parseInput()} disabled={!sourceText.trim() || busy || skuCheckLoading}>Validate</button>
+          <button type="button" className="border bg-white" onClick={downloadCorrectedJson} disabled={!hasRows || busy || importBlockedBySkuCheck}>Download corrected approved JSON</button>
           <button type="button" className="border bg-white" onClick={clearAll} disabled={busy}>Clear</button>
         </div>
+        {skuCheckLoading && <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">Проверка SKU в базе...</div>}
+        {skuCheckError && (
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <span>{skuCheckError}</span>
+            <button type="button" className="border border-red-200 bg-white text-red-700" onClick={() => void retrySkuPreflight()} disabled={busy || skuCheckLoading}>Повторить проверку SKU</button>
+          </div>
+        )}
+        {hasRows && !skuCheckLoading && !skuCheckError && <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-700">Проверка SKU в базе выполнена.</div>}
       </section>
 
       {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-700">{error}</div>}
@@ -194,6 +274,7 @@ export default function FabricImportReviewPage({ navigate }: { navigate: (path: 
             <div>
               <h2 className="text-xl font-semibold">Review table</h2>
               <p className="text-sm text-slate-500">Выбрано {selectedRows.length}, готово к импорту {importableRows.length}. Missing images остаются предупреждением: фото нужны перед публикацией.</p>
+              {hasExistingSkuConflicts && <p className="mt-2 text-sm font-medium text-red-700">Найдены SKU, которые уже есть в каталоге. Эти строки нельзя импортировать повторно.</p>}
             </div>
             <div className="flex max-w-xl flex-col items-start gap-3">
               <label className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
@@ -201,7 +282,7 @@ export default function FabricImportReviewPage({ navigate }: { navigate: (path: 
                   type="checkbox"
                   style={{ width: 'auto' }}
                   checked={importConfirmed}
-                  disabled={busy || importableRows.length === 0 || hasSelectedInvalidRows}
+                  disabled={busy || importBlockedBySkuCheck || importableRows.length === 0 || hasSelectedInvalidRows}
                   onChange={(event) => setImportConfirmed(event.target.checked)}
                 />
                 <span>
@@ -209,7 +290,7 @@ export default function FabricImportReviewPage({ navigate }: { navigate: (path: 
                   <span className="mt-1 block text-xs text-slate-500">Импорт остаётся draft-only; предупреждения по изображениям нужно закрыть перед публикацией.</span>
                 </span>
               </label>
-              <button type="button" className="bg-green-700 text-white disabled:opacity-50" disabled={busy || importableRows.length === 0 || hasSelectedInvalidRows || !importConfirmed} onClick={importSelected}>
+              <button type="button" className="bg-green-700 text-white disabled:opacity-50" disabled={busy || importBlockedBySkuCheck || importableRows.length === 0 || hasSelectedInvalidRows || !importConfirmed} onClick={importSelected}>
                 {busy ? 'Импорт...' : 'Import selected as drafts'}
               </button>
             </div>
