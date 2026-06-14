@@ -128,7 +128,7 @@ def test_user_photo_generation_unpublished_fabric_persists_failed_record(client:
     response = _post_user_photo(client, fabric_id, PNG_1X1, "image/png", BOT_HEADERS,  telegram_id=telegram_id)
 
     assert response.status_code == 400, response.text
-    assert "оопубликован" in response.json()["detail"]
+    assert "опубликован" in response.json()["detail"]
     admin_response = client.get("/api/admin/generations?status=failed", headers=_admin_headers(client))
     assert admin_response.status_code == 200, admin_response.text
     admin_payload = admin_response.json()
