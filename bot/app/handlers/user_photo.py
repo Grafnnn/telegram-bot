@@ -34,8 +34,10 @@ GENERATION_UNAVAILABLE_MESSAGE = (
 GENERATION_FAILED_MESSAGE = "Не удалось сгенерировать примерку. Попробуйте ещё раз или выберите другое фото."
 GENERATION_TIMEOUT_MESSAGE = "Генерация заняла слишком много времени. Попробуйте ещё раз или загрузите другое фото."
 TRY_ON_VALIDATION_MESSAGE = (
-    "Не удалось создать примерку. Проверьте, что ткань опубликована и у неё есть текстура, затем попробуйте снова."
+    "Не удалось заменить ткань на фото. Попробуйте другое фото: одежда должна быть хорошо видна."
 )
+TRY_ON_NO_REFERENCE_IMAGE_MESSAGE = "У выбранной ткани нет изображения для примерки. Выберите другую ткань."
+TRY_ON_NO_FABRIC_MESSAGE = "Сначала выберите ткань из каталога, затем отправьте фото."
 
 
 def backend_client() -> BackendAPIClient:
@@ -76,7 +78,11 @@ async def _remember_fabric_for_try_on(state: FSMContext, fabric: dict[str, Any])
 
 async def _ask_for_photo(message: Message, state: FSMContext, fabric: dict[str, Any]) -> None:
     await _remember_fabric_for_try_on(state, fabric)
-    await message.answer(f"Ткань выбрана для примерки: {_fabric_summary(await state.get_data())}.\n{PHOTO_SAFETY_COPY}")
+    await message.answer(
+        f"Ткань выбрана: {_fabric_summary(await state.get_data())}. "
+        "Теперь отправьте фото, где нужно заменить ткань на одежде.\n"
+        f"{PHOTO_SAFETY_COPY}"
+    )
 
 
 async def _generate_from_photo(message: Message, state: FSMContext, file_id: str) -> None:
@@ -87,7 +93,7 @@ async def _generate_from_photo(message: Message, state: FSMContext, file_id: str
     fabric_id = data.get("fabric_id")
     if not fabric_id:
         await state.clear()
-        await message.answer("Сначала выберите ткань из каталога.")
+        await message.answer(TRY_ON_NO_FABRIC_MESSAGE)
         return
     await state.update_data(last_photo_file_id=file_id)
     await message.answer(GENERATION_PROGRESS_MESSAGE)
@@ -107,7 +113,10 @@ async def _generate_from_photo(message: Message, state: FSMContext, file_id: str
         )
     except BackendAPIError as exc:
         if exc.status in {400, 404, 422}:
-            await message.answer(TRY_ON_VALIDATION_MESSAGE, reply_markup=try_on_result_keyboard())
+            if exc.detail and "изображения для примерки" in exc.detail:
+                await message.answer(TRY_ON_NO_REFERENCE_IMAGE_MESSAGE, reply_markup=try_on_result_keyboard())
+            else:
+                await message.answer(TRY_ON_VALIDATION_MESSAGE, reply_markup=try_on_result_keyboard())
         else:
             await message.answer(friendly_api_error_message(exc), reply_markup=try_on_result_keyboard())
         return
@@ -151,7 +160,9 @@ async def try_on_selected_fabric(callback: CallbackQuery, state: FSMContext) -> 
     if callback.from_user is None or callback.data is None:
         await callback.answer("Не удалось определить пользователя.", show_alert=True)
         return
-    fabric_id = parse_callback_uuid(callback.data, "fabric:try_on:") or parse_callback_uuid(callback.data, "pick:try_on:")
+    fabric_id = parse_callback_uuid(callback.data, "fabric:try_on:") or parse_callback_uuid(
+        callback.data, "pick:try_on:"
+    )
     if fabric_id is None:
         await callback.answer("Эта кнопка больше не актуальна. Откройте каталог заново.", show_alert=True)
         return
@@ -196,7 +207,7 @@ async def user_photo_for_selected_fabric(message: Message, state: FSMContext) ->
         return
     fabric = (selection or {}).get("fabric")
     if not fabric:
-        await message.answer("Сначала выберите ткань из каталога.")
+        await message.answer(TRY_ON_NO_FABRIC_MESSAGE)
         return
     await _ask_for_photo(message, state, fabric)
 

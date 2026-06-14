@@ -7,7 +7,7 @@ from typing import Any
 import aiohttp
 
 from app.config import get_settings
-from app.redaction import safe_exception_summary, safe_path_for_log
+from app.redaction import safe_exception_summary, safe_path_for_log, sanitize_log_message
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +27,11 @@ def image_upload_metadata(content: bytes) -> tuple[str, str]:
 class BackendAPIError(RuntimeError):
     """Controlled backend error surfaced to bot handlers."""
 
-    def __init__(self, status: int, path: str) -> None:
+    def __init__(self, status: int, path: str, detail: str | None = None) -> None:
         super().__init__(f"Backend API returned HTTP {status} for {path}")
         self.status = status
         self.path = path
+        self.detail = detail
 
 
 class BackendUnavailableError(RuntimeError):
@@ -57,7 +58,14 @@ class BackendAPIClient:
                 async with session.request(method, url, headers=headers, **kwargs) as response:
                     if response.status >= 400:
                         logger.error("Backend error %s for %s %s", response.status, method, safe_path)
-                        raise BackendAPIError(response.status, safe_path)
+                        detail = None
+                        try:
+                            error_payload = await response.json()
+                            if isinstance(error_payload, dict) and isinstance(error_payload.get("detail"), str):
+                                detail = sanitize_log_message(error_payload["detail"])
+                        except Exception:
+                            detail = None
+                        raise BackendAPIError(response.status, safe_path, detail)
                     return await response.json()
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             logger.error("Backend is unavailable for %s %s: %s", method, safe_path, safe_exception_summary(exc))

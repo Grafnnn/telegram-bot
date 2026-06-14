@@ -20,13 +20,14 @@ IMAGE_EDIT_PROMPT = (
     "Use the selected fabric realistically, including its color, pattern scale, texture and drape."
 )
 USER_PHOTO_EDIT_PROMPT = (
-    "Create a realistic fashion fabric try-on by editing only the visible garment in the user's photo. "
-    "Apply the selected fabric texture from the reference image to the clothing while preserving "
+    "Edit the user photo as a realistic fashion fabric try-on. "
+    "Use the selected catalog fabric reference image as the only material and texture source. "
+    "Apply the selected fabric only to the visible garment or clothing area while preserving "
     "the person's identity, face, pose, body shape, background, lighting and garment silhouette. "
-    "Do not change the face. "
+    "Do not change the face, hands, hair, body, camera angle, background, objects, room or accessories. "
     "Do not make the person nude. "
-    "Keep the result realistic, respectful and suitable as a fashion preview. "
-    "Use the selected fabric color, pattern, texture and drape only on the clothing."
+    "Do not add text, logos, watermarks, extra people or unrealistic artifacts. "
+    "Preserve folds, seams, shadows and drape so only the clothing fabric changes."
 )
 
 

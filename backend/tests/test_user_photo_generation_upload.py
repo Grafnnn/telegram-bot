@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -37,12 +37,22 @@ def _write_upload(relative_url: str) -> None:
     path.write_bytes(PNG_1X1)
 
 
-def _create_fabric(with_texture: bool = True, status: str = "published") -> str:
+def _create_fabric(
+    with_texture: bool = True,
+    status: str = "published",
+    *,
+    with_main: bool = False,
+    sku: str | None = None,
+    name: str = "User photo fabric",
+    category: str = "cotton",
+    color: str | None = None,
+) -> str:
     with SessionLocal() as db:
         fabric = Fabric(
-            sku=f"PHOTO-{uuid4().hex[:10]}",
-            name="User photo fabric",
-            category="cotton",
+            sku=sku or f"PHOTO-{uuid4().hex[:10]}",
+            name=name,
+            category=category,
+            color=color,
             price_per_meter=1200,
             stock_status="in_stock",
             description_for_gpt="Тестовая ткань для user-photo generation.",
@@ -51,11 +61,15 @@ def _create_fabric(with_texture: bool = True, status: str = "published") -> str:
         db.add(fabric)
         db.commit()
         db.refresh(fabric)
+        if with_main:
+            image_url = f"/uploads/fabrics/{uuid4().hex}-main.png"
+            _write_upload(image_url)
+            db.add(FabricImage(fabric_id=fabric.id, image_url=image_url, image_type="main", sort_order=0))
         if with_texture:
-            image_url = f"/uploads/fabrics/{uuid4().hex}.png"
+            image_url = f"/uploads/fabrics/{uuid4().hex}-texture.png"
             _write_upload(image_url)
             db.add(FabricImage(fabric_id=fabric.id, image_url=image_url, image_type="texture", sort_order=1))
-            db.commit()
+        db.commit()
         return str(fabric.id)
 
 
@@ -86,6 +100,15 @@ def _post_user_photo(
     )
 
 
+def _fabric_reference_path(fabric_id: str, image_type: str) -> str:
+    with SessionLocal() as db:
+        image = db.scalar(
+            select(FabricImage).where(FabricImage.fabric_id == UUID(fabric_id), FabricImage.image_type == image_type)
+        )
+        assert image is not None
+        return str(get_settings().upload_dir / image.image_url.removeprefix("/uploads/"))
+
+
 def test_user_photo_generation_accepts_valid_image_with_internal_token(client: TestClient) -> None:
     fabric_id = _create_fabric()
 
@@ -100,14 +123,26 @@ def test_user_photo_generation_accepts_valid_image_with_internal_token(client: T
     assert "OpenAI API key" in payload["error_message"]
 
 
-def test_user_photo_generation_requires_texture_image(client: TestClient) -> None:
+def test_user_photo_generation_requires_selected_fabric_id(client: TestClient) -> None:
+    response = client.post(
+        "/api/generations/user-photo",
+        headers=BOT_HEADERS,
+        files={"photo": ("photo.png", PNG_1X1, "image/png")},
+    )
+
+    assert response.status_code == 422, response.text
+    with SessionLocal() as db:
+        assert db.scalar(select(Generation)) is None
+
+
+def test_user_photo_generation_requires_reference_image(client: TestClient) -> None:
     fabric_id = _create_fabric(with_texture=False)
     telegram_id = _create_telegram_user()
 
     response = _post_user_photo(client, fabric_id, PNG_1X1, "image/png", BOT_HEADERS, telegram_id=telegram_id)
 
     assert response.status_code == 400, response.text
-    assert "texture image" in response.json()["detail"]
+    assert "изображения для примерки" in response.json()["detail"]
     admin_response = client.get("/api/admin/generations?status=failed", headers=_admin_headers(client))
     assert admin_response.status_code == 200, admin_response.text
     admin_payload = admin_response.json()
@@ -118,7 +153,7 @@ def test_user_photo_generation_requires_texture_image(client: TestClient) -> Non
     assert admin_generation["fabric_id"] == fabric_id
     assert admin_generation["fabric"]["name"] == "User photo fabric"
     assert admin_generation["telegram_user"]["telegram_id"] == telegram_id
-    assert "texture image" in admin_generation["error_message"]
+    assert "изображения для примерки" in admin_generation["error_message"]
 
 
 def test_user_photo_generation_unpublished_fabric_persists_failed_record(client: TestClient) -> None:
@@ -183,6 +218,76 @@ def test_user_photo_generation_saves_mocked_result(client: TestClient, monkeypat
     assert admin_generation["fabric"]["sku"].startswith("PHOTO-")
     assert admin_generation["fabric"]["name"] == "User photo fabric"
     assert admin_generation["fabric"]["category"] == "cotton"
+
+
+def test_user_photo_generation_uses_exact_requested_fabric_reference(client: TestClient, monkeypatch) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_a_id = _create_fabric(sku="PHOTO-A", name="Fabric A", category="linen")
+    fabric_b_id = _create_fabric(sku="PHOTO-B", name="Fabric B", category="silk", color="emerald")
+    expected_reference_path = _fabric_reference_path(fabric_b_id, "texture")
+    captured: dict[str, str] = {}
+
+    def fake_generate(user_photo_path: str, fabric_reference_path: str, prompt: str) -> bytes:
+        captured["user_photo_path"] = user_photo_path
+        captured["fabric_reference_path"] = fabric_reference_path
+        captured["prompt"] = prompt
+        return PNG_1X1
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+
+    response = _post_user_photo(client, fabric_b_id, PNG_1X1, "image/png", BOT_HEADERS)
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["fabric_id"] == fabric_b_id
+    assert captured["user_photo_path"]
+    assert captured["fabric_reference_path"] == expected_reference_path
+    assert fabric_a_id not in captured["prompt"]
+    assert fabric_b_id in captured["prompt"]
+    assert "PHOTO-B" in captured["prompt"]
+    assert "Fabric B" in captured["prompt"]
+    assert "selected catalog fabric reference image as the only fabric source" in captured["prompt"]
+    assert "Preserve the exact same person" in captured["prompt"]
+    assert "Do not change identity" in captured["prompt"]
+
+
+def test_user_photo_generation_prefers_texture_over_main_reference(client: TestClient, monkeypatch) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric(with_main=True)
+    expected_reference_path = _fabric_reference_path(fabric_id, "texture")
+    captured: dict[str, str] = {}
+
+    def fake_generate(user_photo_path: str, fabric_reference_path: str, prompt: str) -> bytes:
+        captured["fabric_reference_path"] = fabric_reference_path
+        return PNG_1X1
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+
+    response = _post_user_photo(client, fabric_id, PNG_1X1, "image/png", BOT_HEADERS)
+
+    assert response.status_code == 201, response.text
+    assert captured["fabric_reference_path"] == expected_reference_path
+
+
+def test_user_photo_generation_falls_back_to_main_reference(client: TestClient, monkeypatch) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric(with_texture=False, with_main=True)
+    expected_reference_path = _fabric_reference_path(fabric_id, "main")
+    captured: dict[str, str] = {}
+
+    def fake_generate(user_photo_path: str, fabric_reference_path: str, prompt: str) -> bytes:
+        captured["fabric_reference_path"] = fabric_reference_path
+        return PNG_1X1
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+
+    response = _post_user_photo(client, fabric_id, PNG_1X1, "image/png", BOT_HEADERS)
+
+    assert response.status_code == 201, response.text
+    assert captured["fabric_reference_path"] == expected_reference_path
 
 
 def test_user_photo_generation_provider_error_is_normalized(client: TestClient, monkeypatch) -> None:

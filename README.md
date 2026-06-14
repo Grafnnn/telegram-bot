@@ -308,6 +308,8 @@ curl -X POST http://localhost:8000/api/admin/fabrics \
 
 - Пользователь выбирает опубликованную ткань в Telegram и отправляет одно безопасное фото, где видна одежда.
 - Backend вызывает `POST /api/generations/user-photo`, сохраняет user photo в `UPLOAD_DIR/user-photos`, применяет texture image выбранной ткани через OpenAI image edit и сохраняет результат в `UPLOAD_DIR/generations`.
+- User-photo generation всегда получает явный `fabric_id` из выбора пользователя и использует только reference image этой ткани: сначала `texture`, затем `main`, иначе controlled error. Случайная или fallback-ткань не подставляется.
+- Prompt формулируется как image edit / clothing-only fabric replacement: сохранить лицо, тело, позу, фон, освещение, предметы и композицию, меняя только материал видимой одежды.
 - Bot использует отдельный длинный timeout `BOT_GENERATION_TIMEOUT_SECONDS`, потому что real image generation может занимать 1–2 минуты.
 - Успешная генерация получает `status="completed"` и `result_image_url`; bot отправляет generated image пользователю.
 - Ошибки провайдера, timeout, отсутствующий ключ и validation failures получают controlled messages без raw traceback/provider details, без upload bytes/base64 и без secret values.

@@ -1,6 +1,7 @@
 """Generation routes."""
 
 import logging
+from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
@@ -90,6 +91,24 @@ def _texture_image_url(fabric: Fabric) -> str:
     return texture.image_url
 
 
+def select_fabric_reference_image(fabric: Fabric) -> str:
+    """Return the selected fabric reference image for user-photo try-on."""
+
+    texture = next((image for image in fabric.images if image.image_type == "texture"), None)
+    main = next((image for image in fabric.images if image.image_type == "main"), None)
+    reference = texture or main
+    if reference is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "У выбранной ткани нет изображения для примерки.")
+    return reference.image_url
+
+
+def prepare_user_photo_edit_inputs(photo_url: str, fabric: Fabric) -> tuple[Path, Path]:
+    """Resolve the user photo and selected catalog fabric reference paths."""
+
+    reference_url = select_fabric_reference_image(fabric)
+    return resolve_upload_path(photo_url), resolve_upload_path(reference_url)
+
+
 def _base_image_url(style: GarmentStyle) -> str:
     if not style.base_image_url:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "У выбранного фасона нет base image.")
@@ -105,15 +124,46 @@ def _build_catalog_style_prompt(fabric: Fabric, style: GarmentStyle) -> str:
     return "\n".join(details)
 
 
-def _build_user_photo_prompt(fabric: Fabric) -> str:
-    details = [USER_PHOTO_EDIT_PROMPT, f"Selected fabric id: {fabric.id}."]
+def build_user_photo_fabric_replacement_prompt(fabric: Fabric, garment_style: GarmentStyle | None = None) -> str:
+    details = [
+        USER_PHOTO_EDIT_PROMPT,
+        "This is an image editing task, not a new image generation task.",
+        "Use the user's uploaded photo as the base image.",
+        "Use the selected catalog fabric reference image as the only fabric source.",
+        "Replace only the visible fabric/material of the clothing item worn by the person.",
+        (
+            "Preserve the exact same person, face, hair, body, hands, skin, pose, camera angle, "
+            "background, lighting, shadows, objects, room, furniture, accessories and image composition."
+        ),
+        "Do not change identity. Do not beautify the person. Do not change body shape.",
+        "Do not add or remove objects. Do not change the scene. Do not invent another fabric.",
+        (
+            "If the original photo has multiple garments, edit only the main visible garment unless "
+            "the user context explicitly identifies another garment."
+        ),
+        "Keep all unedited regions pixel-level similar to the original photo.",
+        "Selected catalog fabric:",
+        f"Fabric id: {fabric.id}",
+        f"SKU: {fabric.sku}",
+        f"Name: {fabric.name}",
+    ]
     if fabric.description_for_gpt:
-        details.append(f"Fabric description: {fabric.description_for_gpt}")
+        details.append(f"Description: {fabric.description_for_gpt}")
     if fabric.category:
-        details.append(f"Fabric category: {fabric.category}")
+        details.append(f"Category: {fabric.category}")
     if fabric.color:
-        details.append(f"Fabric color: {fabric.color}")
+        details.append(f"Color: {fabric.color}")
+    if garment_style and garment_style.description:
+        details.append(f"Garment style context: {garment_style.description}")
+    details.append(
+        "The final clothing fabric must match the selected catalog fabric reference: "
+        "color, pattern, weave, texture, scale and visual style."
+    )
     return "\n".join(details)
+
+
+def _build_user_photo_prompt(fabric: Fabric) -> str:
+    return build_user_photo_fabric_replacement_prompt(fabric)
 
 
 def _safe_generation_error(exc: Exception) -> str:
@@ -251,14 +301,12 @@ async def _create_user_photo_generation(
     db.refresh(generation)
     try:
         _require_published_fabric(fabric)
-        texture_url = _texture_image_url(fabric)
-        texture_path = resolve_upload_path(texture_url)
         photo_url = await save_upload(photo, "user-photos")
         generation.user_photo_url = photo_url
-        photo_path = resolve_upload_path(photo_url)
+        photo_path, reference_path = prepare_user_photo_edit_inputs(photo_url, fabric)
         image_bytes = image_generation_service.generate_fabric_on_user_photo(
             str(photo_path),
-            str(texture_path),
+            str(reference_path),
             prompt,
         )
         _mark_generation_completed(generation, image_bytes)
