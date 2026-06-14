@@ -23,7 +23,7 @@ from app.schemas.generation import (
 from app.services import image_generation_service
 from app.services.image_generation_service import IMAGE_ERROR, IMAGE_EDIT_PROMPT, USER_PHOTO_EDIT_PROMPT
 from app.services.storage_service import resolve_upload_path, save_generated_image, save_upload
-from app.utils.redaction import safe_exception_summary
+from app.utils.redaction import safe_exception_summary, sanitize_log_message
 
 router = APIRouter(prefix="/generations", tags=["generations"])
 logger = logging.getLogger(__name__)
@@ -60,6 +60,18 @@ def _published_fabric_or_404(db: Session, fabric_id: UUID) -> Fabric:
     if fabric.status != "published":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Выбранная ткань не найдена или больше не опубликована.")
     return fabric
+
+
+def _fabric_or_404(db: Session, fabric_id: UUID) -> Fabric:
+    fabric = db.scalar(select(Fabric).options(selectinload(Fabric.images)).where(Fabric.id == fabric_id))
+    if fabric is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ткань не найдена")
+    return fabric
+
+
+def _require_published_fabric(fabric: Fabric) -> None:
+    if fabric.status != "published":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Выбранная ткань не найдена или больше не опубликована.")
 
 
 def _selected_published_style(db: Session, user: TelegramUser) -> GarmentStyle:
@@ -107,6 +119,9 @@ def _build_user_photo_prompt(fabric: Fabric) -> str:
 def _safe_generation_error(exc: Exception) -> str:
     if isinstance(exc, MissingOpenAIKeyError):
         return str(exc)
+    if isinstance(exc, HTTPException):
+        detail = exc.detail if isinstance(exc.detail, str) else "Ошибка генерации скрыта из интерфейса."
+        return sanitize_log_message(detail)
     return IMAGE_ERROR
 
 
@@ -221,16 +236,11 @@ async def _create_user_photo_generation(
     linked_user_id = telegram_user_id
     if telegram_id is not None:
         linked_user_id = _telegram_user_or_404(db, telegram_id).id
-    fabric = _published_fabric_or_404(db, fabric_id)
-    texture_url = _texture_image_url(fabric)
-    texture_path = resolve_upload_path(texture_url)
-    photo_url = await save_upload(photo, "user-photos")
-    photo_path = resolve_upload_path(photo_url)
+    fabric = _fabric_or_404(db, fabric_id)
     prompt = _build_user_photo_prompt(fabric)
     generation = Generation(
         telegram_user_id=linked_user_id,
         fabric_id=fabric_id,
-        user_photo_url=photo_url,
         mode="user_photo",
         prompt=prompt,
         status=GENERATION_STATUS_PROCESSING,
@@ -239,12 +249,28 @@ async def _create_user_photo_generation(
     db.commit()
     db.refresh(generation)
     try:
+        _require_published_fabric(fabric)
+        texture_url = _texture_image_url(fabric)
+        texture_path = resolve_upload_path(texture_url)
+        photo_url = await save_upload(photo, "user-photos")
+        generation.user_photo_url = photo_url
+        photo_path = resolve_upload_path(photo_url)
         image_bytes = image_generation_service.generate_fabric_on_user_photo(
             str(photo_path),
             str(texture_path),
             prompt,
         )
         _mark_generation_completed(generation, image_bytes)
+    except HTTPException as exc:
+        _mark_generation_failed(generation, exc)
+        logger.warning(
+            "User photo generation validation failed generation_id=%s error=%s",
+            generation.id,
+            safe_exception_summary(exc),
+        )
+        db.commit()
+        db.refresh(generation)
+        raise
     except Exception as exc:
         _mark_generation_failed(generation, exc)
         logger.warning(

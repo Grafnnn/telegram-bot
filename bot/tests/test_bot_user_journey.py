@@ -10,7 +10,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.api_client import BackendAPIClient, BackendAPIError, BackendUnavailableError
+from app.api_client import BackendAPIClient, BackendAPIError, BackendUnavailableError, image_upload_metadata
 from app.handler_utils import (
     BACKEND_UNAVAILABLE_MESSAGE,
     INTERNAL_SETUP_MESSAGE,
@@ -333,7 +333,7 @@ def test_try_on_photo_failure_is_friendly_and_safe(monkeypatch) -> None:
 
 
 def test_api_client_sends_internal_token_and_raises_controlled_errors(monkeypatch) -> None:
-    captured_requests: list[tuple[str, str, dict[str, str]]] = []
+    captured_requests: list[tuple[str, str, dict[str, str], object | None]] = []
 
     class FakeResponse:
         status = 200
@@ -358,7 +358,7 @@ def test_api_client_sends_internal_token_and_raises_controlled_errors(monkeypatc
             return None
 
         def request(self, method, url, headers=None, **kwargs):
-            captured_requests.append((method, url, headers or {}))
+            captured_requests.append((method, url, headers or {}, kwargs.get("data")))
             return FakeResponse()
 
     monkeypatch.setattr("app.api_client.aiohttp.ClientSession", FakeSession)
@@ -371,9 +371,21 @@ def test_api_client_sends_internal_token_and_raises_controlled_errors(monkeypatc
     assert captured_requests[-1][0] == "POST"
     assert captured_requests[-1][1].endswith("/generations/user-photo")
     assert captured_requests[-1][2]["X-Bot-Token"] == SECRET_TOKEN
+    form = captured_requests[-1][3]
+    assert form is not None
+    fields = getattr(form, "_fields")
+    assert [field[0]["name"] for field in fields] == ["telegram_id", "fabric_id", "photo"]
+    assert fields[2][0]["filename"] == "telegram-photo.png"
+    assert fields[2][1]["Content-Type"] == "image/png"
 
     assert friendly_api_error_message(BackendAPIError(422, "/bot/users/1/selected-fabric")) == VALIDATION_MESSAGE
     assert_no_secret_leak(friendly_api_error_message(BackendAPIError(401, "/bot/users/1/selected-fabric")))
+
+
+def test_user_photo_upload_metadata_matches_image_bytes() -> None:
+    assert image_upload_metadata(PNG_1X1) == ("telegram-photo.png", "image/png")
+    assert image_upload_metadata(b"\xff\xd8\xff\x00") == ("telegram-photo.jpg", "image/jpeg")
+    assert image_upload_metadata(b"RIFFxxxxWEBPpayload") == ("telegram-photo.webp", "image/webp")
 
 
 def test_redaction_masks_bot_headers_and_error_strings() -> None:
