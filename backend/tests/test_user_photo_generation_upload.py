@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from uuid import UUID, uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -109,6 +111,23 @@ def _fabric_reference_path(fabric_id: str, image_type: str) -> str:
         return str(get_settings().upload_dir / image.image_url.removeprefix("/uploads/"))
 
 
+def _remove_fabric_reference_file(fabric_id: str, image_type: str) -> str:
+    path = Path(_fabric_reference_path(fabric_id, image_type))
+    path.unlink()
+    return str(path)
+
+
+def _set_fabric_reference_url(fabric_id: str, image_type: str, image_url: str) -> None:
+    with SessionLocal() as db:
+        image = db.scalar(
+            select(FabricImage).where(FabricImage.fabric_id == UUID(fabric_id), FabricImage.image_type == image_type)
+        )
+        assert image is not None
+        image.image_url = image_url
+        db.add(image)
+        db.commit()
+
+
 def test_user_photo_generation_accepts_valid_image_with_internal_token(client: TestClient) -> None:
     fabric_id = _create_fabric()
 
@@ -190,8 +209,9 @@ def test_user_photo_generation_saves_mocked_result(client: TestClient, monkeypat
     fabric_id = _create_fabric()
 
     def fake_generate(user_photo_path: str, fabric_texture_path: str, prompt: str) -> bytes:
-        assert user_photo_path
-        assert fabric_texture_path
+        assert Path(user_photo_path).exists()
+        assert Path(user_photo_path).parent.name == "user-photos"
+        assert Path(fabric_texture_path).exists()
         assert "visible garment" in prompt
         return PNG_1X1
 
@@ -288,6 +308,116 @@ def test_user_photo_generation_falls_back_to_main_reference(client: TestClient, 
 
     assert response.status_code == 201, response.text
     assert captured["fabric_reference_path"] == expected_reference_path
+
+
+def test_user_photo_generation_falls_back_to_same_fabric_main_when_texture_file_is_missing(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    other_fabric_id = _create_fabric(sku="PHOTO-OTHER", name="Other fabric", with_main=True)
+    fabric_id = _create_fabric(sku="PHOTO-MAIN-FALLBACK", name="Main fallback fabric", with_main=True)
+    _remove_fabric_reference_file(fabric_id, "texture")
+    expected_reference_path = _fabric_reference_path(fabric_id, "main")
+    other_reference_path = _fabric_reference_path(other_fabric_id, "texture")
+    captured: dict[str, str] = {}
+
+    def fake_generate(user_photo_path: str, fabric_reference_path: str, prompt: str) -> bytes:
+        captured["user_photo_path"] = user_photo_path
+        captured["fabric_reference_path"] = fabric_reference_path
+        captured["prompt"] = prompt
+        return PNG_1X1
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+
+    response = _post_user_photo(client, fabric_id, PNG_1X1, "image/png", BOT_HEADERS)
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["fabric_id"] == fabric_id
+    assert Path(captured["user_photo_path"]).exists()
+    assert captured["fabric_reference_path"] == expected_reference_path
+    assert captured["fabric_reference_path"] != other_reference_path
+    assert fabric_id in captured["prompt"]
+    assert other_fabric_id not in captured["prompt"]
+
+
+def test_user_photo_generation_missing_reference_files_fail_without_provider_or_fallback(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric(with_main=True)
+    _remove_fabric_reference_file(fabric_id, "texture")
+    _remove_fabric_reference_file(fabric_id, "main")
+    telegram_id = _create_telegram_user()
+    provider_called = False
+    log_messages: list[str] = []
+
+    def fake_generate(user_photo_path: str, fabric_reference_path: str, prompt: str) -> bytes:
+        nonlocal provider_called
+        provider_called = True
+        return PNG_1X1
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+    monkeypatch.setattr(
+        generation_routes.logger,
+        "warning",
+        lambda message, *args: log_messages.append(message % args),
+    )
+
+    response = _post_user_photo(client, fabric_id, PNG_1X1, "image/png", BOT_HEADERS, telegram_id=telegram_id)
+
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == "Selected fabric has no usable reference image."
+    assert provider_called is False
+    admin_response = client.get("/api/admin/generations?status=failed", headers=_admin_headers(client))
+    assert admin_response.status_code == 200, admin_response.text
+    [admin_generation] = admin_response.json()["items"]
+    assert admin_generation["fabric_id"] == fabric_id
+    assert admin_generation["telegram_user"]["telegram_id"] == telegram_id
+    assert admin_generation["user_photo_url"].startswith("/uploads/user-photos/")
+    assert admin_generation["error_message"] == "Selected fabric has no usable reference image."
+    log_text = "\n".join(log_messages)
+    assert "Selected fabric reference file is missing" in log_text
+    assert "OPENAI_API_KEY" not in log_text
+    assert "BOT_INTERNAL_TOKEN" not in log_text
+    assert "data:image" not in log_text
+    assert "base64" not in log_text
+    assert "PNG" not in log_text
+
+
+@pytest.mark.parametrize("unsafe_url", ["https://example.com/fabric.png", "/uploads/../secret.png"])
+def test_user_photo_generation_rejects_unsafe_reference_url_without_main_fallback(
+    client: TestClient,
+    monkeypatch,
+    unsafe_url: str,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric(with_main=True)
+    _set_fabric_reference_url(fabric_id, "texture", unsafe_url)
+    provider_called = False
+
+    def fake_generate(user_photo_path: str, fabric_reference_path: str, prompt: str) -> bytes:
+        nonlocal provider_called
+        provider_called = True
+        return PNG_1X1
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+
+    response = _post_user_photo(client, fabric_id, PNG_1X1, "image/png", BOT_HEADERS)
+
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == "Selected fabric reference image URL is invalid."
+    assert provider_called is False
+    admin_response = client.get("/api/admin/generations?status=failed", headers=_admin_headers(client))
+    assert admin_response.status_code == 200, admin_response.text
+    [admin_generation] = admin_response.json()["items"]
+    assert admin_generation["fabric_id"] == fabric_id
+    assert admin_generation["error_message"] == "Selected fabric reference image URL is invalid."
 
 
 def test_user_photo_generation_provider_error_is_normalized(client: TestClient, monkeypatch) -> None:

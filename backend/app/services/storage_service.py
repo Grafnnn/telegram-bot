@@ -22,6 +22,14 @@ IMAGE_SIGNATURES: dict[str, Callable[[bytes], bool]] = {
 }
 
 
+class UploadPathResolutionError(HTTPException):
+    """Controlled upload path resolution failure with internal reason."""
+
+    def __init__(self, reason: str, detail: str) -> None:
+        super().__init__(status.HTTP_400_BAD_REQUEST, detail)
+        self.reason = reason
+
+
 def _safe_extension(filename: str) -> str:
     ext = Path(filename).suffix.lower().lstrip(".")
     if ext not in ALLOWED_EXTENSIONS:
@@ -48,14 +56,14 @@ def resolve_upload_path(image_url: str) -> Path:
     """Resolve a public /uploads URL to a safe path inside UPLOAD_DIR."""
 
     if not image_url.startswith("/uploads/"):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Можно использовать только URL из /uploads/.")
+        raise UploadPathResolutionError("unsupported_prefix", "Можно использовать только URL из /uploads/.")
     relative = image_url.removeprefix("/uploads/")
     upload_root = get_settings().upload_dir.resolve()
     target = (upload_root / relative).resolve()
     if upload_root != target and upload_root not in target.parents:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Недопустимый путь к файлу.")
+        raise UploadPathResolutionError("path_traversal", "Недопустимый путь к файлу.")
     if not target.exists() or not target.is_file():
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Файл загрузки не найден.")
+        raise UploadPathResolutionError("missing_file", "Файл загрузки не найден.")
     return target
 
 
