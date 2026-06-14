@@ -160,6 +160,14 @@ class TryOnGenerationClient:
         return self.result
 
 
+class TryOnTimeoutClient:
+    async def upsert_user(self, **kwargs):
+        return {"ok": True}
+
+    async def create_user_photo_generation(self, **kwargs):
+        raise BackendUnavailableError("backend timed out")
+
+
 def run(coro):
     return asyncio.run(coro)
 
@@ -328,12 +336,36 @@ def test_try_on_photo_failure_is_friendly_and_safe(monkeypatch) -> None:
 
     run(user_photo.handle_try_on_photo(message, state))
 
+    assert message.answers[-1][0] == user_photo.GENERATION_FAILED_MESSAGE
+    assert_no_secret_leak(message.answers[-1][0])
+
+
+def test_try_on_photo_missing_openai_key_is_friendly(monkeypatch) -> None:
+    client = TryOnGenerationClient({"status": "failed", "error_message": "OpenAI API key не настроен"})
+    monkeypatch.setattr(user_photo, "backend_client", lambda: client)
+    state = FakeState({"fabric_id": str(uuid4()), "fabric_name": "Шелк молочный", "fabric_sku": "SILK-001"})
+    message = FakeMessage(photo=[SimpleNamespace(file_id="high")])
+
+    run(user_photo.handle_try_on_photo(message, state))
+
     assert message.answers[-1][0] == user_photo.GENERATION_UNAVAILABLE_MESSAGE
+    assert_no_secret_leak(message.answers[-1][0])
+
+
+def test_try_on_photo_timeout_is_friendly(monkeypatch) -> None:
+    monkeypatch.setattr(user_photo, "backend_client", lambda: TryOnTimeoutClient())
+    state = FakeState({"fabric_id": str(uuid4()), "fabric_name": "Шелк молочный", "fabric_sku": "SILK-001"})
+    message = FakeMessage(photo=[SimpleNamespace(file_id="high")])
+
+    run(user_photo.handle_try_on_photo(message, state))
+
+    assert message.answers[-1][0] == user_photo.GENERATION_TIMEOUT_MESSAGE
     assert_no_secret_leak(message.answers[-1][0])
 
 
 def test_api_client_sends_internal_token_and_raises_controlled_errors(monkeypatch) -> None:
     captured_requests: list[tuple[str, str, dict[str, str], object | None]] = []
+    captured_timeouts: list[float | None] = []
 
     class FakeResponse:
         status = 200
@@ -349,7 +381,8 @@ def test_api_client_sends_internal_token_and_raises_controlled_errors(monkeypatc
 
     class FakeSession:
         def __init__(self, *args, **kwargs):
-            pass
+            timeout = kwargs.get("timeout")
+            captured_timeouts.append(getattr(timeout, "total", None))
 
         async def __aenter__(self):
             return self
@@ -366,6 +399,7 @@ def test_api_client_sends_internal_token_and_raises_controlled_errors(monkeypatc
     client = BackendAPIClient("http://backend:8000/api", bot_internal_token=SECRET_TOKEN)
     assert run(client.get_fabrics()) == []
     assert captured_requests[0][2]["X-Bot-Token"] == SECRET_TOKEN
+    assert captured_timeouts[0] == 10
 
     assert run(client.create_user_photo_generation(1001, str(uuid4()), PNG_1X1)) == {"items": []}
     assert captured_requests[-1][0] == "POST"
@@ -377,6 +411,7 @@ def test_api_client_sends_internal_token_and_raises_controlled_errors(monkeypatc
     assert [field[0]["name"] for field in fields] == ["telegram_id", "fabric_id", "photo"]
     assert fields[2][0]["filename"] == "telegram-photo.png"
     assert fields[2][1]["Content-Type"] == "image/png"
+    assert captured_timeouts[-1] == 180
 
     assert friendly_api_error_message(BackendAPIError(422, "/bot/users/1/selected-fabric")) == VALIDATION_MESSAGE
     assert_no_secret_leak(friendly_api_error_message(BackendAPIError(401, "/bot/users/1/selected-fabric")))

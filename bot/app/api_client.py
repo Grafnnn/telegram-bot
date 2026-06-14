@@ -39,19 +39,21 @@ class BackendUnavailableError(RuntimeError):
 
 class BackendAPIClient:
     def __init__(self, base_url: str, bot_internal_token: str | None = None) -> None:
+        settings = get_settings()
         self.base_url = base_url.rstrip("/")
-        self.bot_internal_token = (
-            bot_internal_token if bot_internal_token is not None else get_settings().bot_internal_token
-        )
+        self.bot_internal_token = bot_internal_token if bot_internal_token is not None else settings.bot_internal_token
+        self.backend_request_timeout_seconds = settings.backend_request_timeout_seconds
+        self.generation_request_timeout_seconds = settings.generation_request_timeout_seconds
 
-    async def _request(self, method: str, path: str, **kwargs) -> Any:
+    async def _request(self, method: str, path: str, timeout_seconds: float | None = None, **kwargs) -> Any:
         url = f"{self.base_url}{path}"
         safe_path = safe_path_for_log(path)
         headers = kwargs.pop("headers", {}) or {}
         if self.bot_internal_token:
             headers = {**headers, "X-Bot-Token": self.bot_internal_token}
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+            request_timeout = timeout_seconds or self.backend_request_timeout_seconds
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=request_timeout)) as session:
                 async with session.request(method, url, headers=headers, **kwargs) as response:
                     if response.status >= 400:
                         logger.error("Backend error %s for %s %s", response.status, method, safe_path)
@@ -118,4 +120,9 @@ class BackendAPIClient:
             filename=filename or inferred_filename,
             content_type=content_type or inferred_content_type,
         )
-        return await self._request("POST", "/generations/user-photo", data=form)
+        return await self._request(
+            "POST",
+            "/generations/user-photo",
+            data=form,
+            timeout_seconds=self.generation_request_timeout_seconds,
+        )

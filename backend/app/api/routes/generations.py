@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.api.rate_limit import rate_limit_catalog_style_generation, rate_limit_user_photo_generation
 from app.api.deps import verify_bot_internal_token
-from app.config import MissingOpenAIKeyError
+from app.config import MissingOpenAIKeyError, get_settings
 from app.database import get_db
 from app.models import Fabric, GarmentStyle, Generation, TelegramUser
 from app.schemas.generation import (
@@ -145,7 +145,8 @@ def _active_catalog_style_generation(
 
 
 def _mark_generation_completed(generation: Generation, image_bytes: bytes) -> None:
-    generation.result_image_url = save_generated_image(image_bytes, "png")
+    extension = get_settings().openai_image_output_format.strip().lower()
+    generation.result_image_url = save_generated_image(image_bytes, extension)
     generation.status = GENERATION_STATUS_COMPLETED
     generation.error_message = None
 

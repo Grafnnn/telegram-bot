@@ -9,7 +9,7 @@ from aiogram import Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from app.api_client import BackendAPIClient, BackendAPIError
+from app.api_client import BackendAPIClient, BackendAPIError, BackendUnavailableError
 from app.config import get_settings
 from app.handler_utils import friendly_api_error_message, parse_callback_uuid
 from app.handlers import catalog
@@ -27,10 +27,12 @@ PHOTO_SAFETY_COPY = (
     "Загрузите фото, где хорошо видна одежда. "
     "Не отправляйте документы, интимные фото или фото других людей без согласия."
 )
-GENERATION_PROGRESS_MESSAGE = "Генерирую примерку ткани, это может занять немного времени…"
+GENERATION_PROGRESS_MESSAGE = "Генерирую примерку ткани, это может занять до 1–2 минут…"
 GENERATION_UNAVAILABLE_MESSAGE = (
-    "Генерация пока не настроена на сервере. Каталог и выбор ткани работают."
+    "Генерация временно не настроена на сервере. Каталог и выбор ткани работают."
 )
+GENERATION_FAILED_MESSAGE = "Не удалось сгенерировать примерку. Попробуйте ещё раз или выберите другое фото."
+GENERATION_TIMEOUT_MESSAGE = "Генерация заняла слишком много времени. Попробуйте ещё раз или загрузите другое фото."
 TRY_ON_VALIDATION_MESSAGE = (
     "Не удалось создать примерку. Проверьте, что ткань опубликована и у неё есть текстура, затем попробуйте снова."
 )
@@ -44,6 +46,13 @@ def _fabric_summary(data: dict[str, Any]) -> str:
     name = data.get("fabric_name") or "выбранная ткань"
     sku = data.get("fabric_sku")
     return f"{name} ({sku})" if sku else str(name)
+
+
+def _failed_generation_message(result: dict[str, Any] | None) -> str:
+    error_message = str((result or {}).get("error_message") or "").lower()
+    if "openai api key" in error_message or "не настро" in error_message:
+        return GENERATION_UNAVAILABLE_MESSAGE
+    return GENERATION_FAILED_MESSAGE
 
 
 async def _download_telegram_photo(message: Message, file_id: str) -> bytes:
@@ -102,6 +111,10 @@ async def _generate_from_photo(message: Message, state: FSMContext, file_id: str
         else:
             await message.answer(friendly_api_error_message(exc), reply_markup=try_on_result_keyboard())
         return
+    except BackendUnavailableError as exc:
+        logger.warning("User photo try-on timed out safely: %s", safe_exception_summary(exc))
+        await message.answer(GENERATION_TIMEOUT_MESSAGE, reply_markup=try_on_result_keyboard())
+        return
     except Exception as exc:
         logger.warning("User photo try-on failed safely: %s", safe_exception_summary(exc))
         await message.answer(GENERATION_UNAVAILABLE_MESSAGE, reply_markup=try_on_result_keyboard())
@@ -127,7 +140,7 @@ async def _generate_from_photo(message: Message, state: FSMContext, file_id: str
             reply_markup=try_on_result_keyboard(),
         )
         return
-    await message.answer(GENERATION_UNAVAILABLE_MESSAGE, reply_markup=try_on_result_keyboard())
+    await message.answer(_failed_generation_message(result), reply_markup=try_on_result_keyboard())
 
 
 @router.callback_query(

@@ -21,6 +21,13 @@ CRITICAL_DEPLOYMENT_ENV_NAMES = {
     "BOT_INTERNAL_TOKEN",
     "TELEGRAM_BOT_TOKEN",
     "OPENAI_API_KEY",
+    "OPENAI_IMAGE_MODEL",
+    "OPENAI_IMAGE_SIZE",
+    "OPENAI_IMAGE_QUALITY",
+    "OPENAI_IMAGE_OUTPUT_FORMAT",
+    "OPENAI_IMAGE_TIMEOUT_SECONDS",
+    "BOT_BACKEND_TIMEOUT_SECONDS",
+    "BOT_GENERATION_TIMEOUT_SECONDS",
     "UPLOAD_DIR",
     "MAX_UPLOAD_BYTES",
     "RATE_LIMIT_WINDOW_SECONDS",
@@ -138,6 +145,8 @@ def test_development_runtime_accepts_demo_defaults() -> None:
 
 def test_bot_config_reads_internal_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BOT_INTERNAL_TOKEN", "runtime-test-token")
+    monkeypatch.setenv("BOT_BACKEND_TIMEOUT_SECONDS", "11")
+    monkeypatch.setenv("BOT_GENERATION_TIMEOUT_SECONDS", "181")
     module_path = REPO_ROOT / "bot" / "app" / "config.py"
     spec = importlib.util.spec_from_file_location("runtime_bot_config", module_path)
     assert spec and spec.loader
@@ -146,3 +155,5 @@ def test_bot_config_reads_internal_token(monkeypatch: pytest.MonkeyPatch) -> Non
     spec.loader.exec_module(module)
 
     assert module.get_settings().bot_internal_token == "runtime-test-token"
+    assert module.get_settings().backend_request_timeout_seconds == 11
+    assert module.get_settings().generation_request_timeout_seconds == 181

@@ -7,12 +7,24 @@ TOKEN_PLACEHOLDER = "put_token_here"
 BOT_INTERNAL_TOKEN_PLACEHOLDER = "change_me_bot_internal_token"
 
 
+def _get_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if not value:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class BotSettings:
     telegram_bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", TOKEN_PLACEHOLDER)
     backend_api_url: str = os.getenv("BOT_BACKEND_API_URL", "http://backend:8000/api")
     backend_public_url: str = os.getenv("BACKEND_PUBLIC_URL", "http://localhost:8000")
     bot_internal_token: str = os.getenv("BOT_INTERNAL_TOKEN", BOT_INTERNAL_TOKEN_PLACEHOLDER)
+    backend_request_timeout_seconds: float = _get_float("BOT_BACKEND_TIMEOUT_SECONDS", 10)
+    generation_request_timeout_seconds: float = _get_float("BOT_GENERATION_TIMEOUT_SECONDS", 180)
 
     @property
     def is_configured(self) -> bool:

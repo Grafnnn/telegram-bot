@@ -13,7 +13,7 @@ backend/
     models/                  # Admin, TelegramUser, Fabric, FabricImage, GarmentStyle, Generation
     schemas/                 # Pydantic v2 schemas
     api/routes/              # auth, admin CRUD, public catalog, generations
-    services/                # auth, storage, seed, OpenAI/image/recommendation stubs
+    services/                # auth, storage, seed, OpenAI/image generation/recommendation
     utils/                   # JWT/password helpers, pagination
   alembic/                   # Alembic env и initial migration
   requirements.txt
@@ -49,7 +49,7 @@ cp .env.example .env
 Минимально замените:
 
 - `TELEGRAM_BOT_TOKEN=put_token_here` — реальный токен Telegram-бота.
-- `OPENAI_API_KEY=put_openai_key_here` — реальный OpenAI API key, когда будете подключать AI.
+- `OPENAI_API_KEY=put_openai_key_here` — реальный OpenAI API key для GPT-подбора и AI-визуализации.
 - `BOT_INTERNAL_TOKEN=change_me_bot_internal_token` — общий внутренний токен backend и bot.
 - `JWT_SECRET=replace_with_strong_admin_jwt_secret` — сильный секрет для JWT.
 - `INITIAL_ADMIN_PASSWORD=replace_with_strong_admin_password` — безопасный пароль начального администратора.
@@ -64,7 +64,7 @@ cp .env.example .env
 
 - `BOT_INTERNAL_TOKEN` задан одним и тем же значением для backend и bot.
 - `JWT_SECRET` и `INITIAL_ADMIN_PASSWORD` заменены на реальные секреты перед production-like запуском.
-- `OPENAI_API_KEY` и опциональный `OPENAI_MODEL` заданы для AI-функций.
+- `OPENAI_API_KEY`, `OPENAI_MODEL` и `OPENAI_IMAGE_*` заданы для AI-функций, если generation должен работать.
 - Frontend получает только `VITE_API_BASE_URL` и `VITE_BACKEND_PUBLIC_URL`; backend secrets не должны попадать в Vite env.
 - Backend tests используют отдельную `TEST_DATABASE_URL`; имя тестовой базы должно содержать `test`.
 
@@ -84,7 +84,9 @@ cp .env.example .env
 | `INITIAL_ADMIN_PASSWORD` | backend bootstrap | Сильный initial password; `admin12345` и пустое значение запрещены в production-like режиме. |
 | `BOT_INTERNAL_TOKEN` | backend и bot | Одинаковый strong token в обоих сервисах; placeholder запрещен в production-like backend. |
 | `TELEGRAM_BOT_TOKEN` | bot | Реальный token Telegram-бота; placeholder безопасно завершает bot container без запуска polling. |
-| `OPENAI_API_KEY`, `OPENAI_MODEL` | backend AI/generation | Реальный key нужен для AI-функций; placeholder оставляет controlled failed state/error. |
+| `BOT_BACKEND_TIMEOUT_SECONDS`, `BOT_GENERATION_TIMEOUT_SECONDS` | bot | Обычный backend timeout и увеличенный timeout для user-photo generation upload. |
+| `OPENAI_API_KEY`, `OPENAI_MODEL` | backend AI/recommendation | Реальный key нужен для GPT-подбора; placeholder оставляет controlled fallback/error. |
+| `OPENAI_IMAGE_MODEL`, `OPENAI_IMAGE_SIZE`, `OPENAI_IMAGE_QUALITY`, `OPENAI_IMAGE_OUTPUT_FORMAT`, `OPENAI_IMAGE_TIMEOUT_SECONDS` | backend image generation | Настройки OpenAI image edit для catalog-style и user-photo try-on; defaults: `gpt-image-1`, `1024x1536`, `medium`, `png`, `120`. |
 | `UPLOAD_DIR` | backend | Persistent uploads volume/path для fabrics, garment styles, generations и user photos. |
 | `MAX_UPLOAD_BYTES` | backend upload validation | Byte limit, имеет приоритет над `MAX_UPLOAD_SIZE_MB`. |
 | `RATE_LIMIT_WINDOW_SECONDS`, `ADMIN_LOGIN_RATE_LIMIT`, `BOT_API_RATE_LIMIT`, `GENERATION_RATE_LIMIT`, `UPLOAD_RATE_LIMIT` | backend abuse guards | Ненулевые scoped limits для admin login, bot API, generation и uploads; `0` используйте только для local debugging. |
@@ -110,6 +112,7 @@ Runtime diagnostics:
 - `/api/health` возвращает только `{"status":"ok"}` и не раскрывает secrets.
 - Upload limits возвращают controlled `400`/`413`/`415`, rate limits возвращают `429` с `Retry-After`.
 - Provider/OpenAI failures не должны попадать наружу как raw traceback.
+- User-photo generation может занимать 1–2 минуты; bot использует отдельный `BOT_GENERATION_TIMEOUT_SECONDS` для этого endpoint.
 
 ## Post-merge smoke checks
 
@@ -253,8 +256,8 @@ curl -X POST http://localhost:8000/api/admin/fabrics \
 - JWT login `/api/auth/login` и `/api/auth/me`.
 - Защищённые `/api/admin/*` endpoints для тканей, фасонов и генераций.
 - Public catalog endpoints для опубликованных тканей и фасонов; `/api/catalog/fabrics/recommend` анализирует текстовый запрос, ранжирует только опубликованные ткани из базы и возвращает объяснения подбора.
-- Storage service для безопасной загрузки изображений в подпапки `UPLOAD_DIR`.
-- Заглушки AI/recommendation/image generation с правильными интерфейсами.
+- Storage service для безопасной загрузки изображений в подпапки `UPLOAD_DIR` и сохранения generated images.
+- GPT recommendation fallback и OpenAI image edit integration с controlled failed-state behavior, если AI не настроен.
 - Aiogram 3 scaffold бота с командами `/start`, `/catalog`, `/pick`, `/styles`, `/help`.
 - React + TypeScript + Vite + Tailwind scaffold админки на русском языке.
 - Dockerfile для backend, bot и admin-frontend.
@@ -297,20 +300,31 @@ curl -X POST http://localhost:8000/api/admin/fabrics \
 - Пользователь выбирает реальную опубликованную ткань и реальный опубликованный фасон в Telegram.
 - Когда ткань и фасон выбраны, бот показывает кнопку «Создать визуализацию».
 - Backend вызывает `POST /api/generations/catalog-style`, использует только выбранные `selected_fabric_id` и `selected_garment_style_id`, создает запись `Generation` и сохраняет результат в `/uploads/generations`.
+- Backend использует OpenAI image edit с base image фасона, texture image ткани и опциональной mask image.
 - Если `OPENAI_API_KEY` не настроен или равен `put_openai_key_here`, генерация не выполняется, запись получает `status=failed`, а приложение и бот не падают.
 - AI-визуализация показывает примерный внешний вид ткани на фасоне и может отличаться от реального изделия.
 
+## AI-примерка ткани на пользовательском фото
+
+- Пользователь выбирает опубликованную ткань в Telegram и отправляет одно безопасное фото, где видна одежда.
+- Backend вызывает `POST /api/generations/user-photo`, сохраняет user photo в `UPLOAD_DIR/user-photos`, применяет texture image выбранной ткани через OpenAI image edit и сохраняет результат в `UPLOAD_DIR/generations`.
+- Bot использует отдельный длинный timeout `BOT_GENERATION_TIMEOUT_SECONDS`, потому что real image generation может занимать 1–2 минуты.
+- Успешная генерация получает `status="completed"` и `result_image_url`; bot отправляет generated image пользователю.
+- Ошибки провайдера, timeout, отсутствующий ключ и validation failures получают controlled messages без raw traceback/provider details, без upload bytes/base64 и без secret values.
+- Missing/wrong `X-Bot-Token` отклоняется до создания записи. После успешной bot-auth проверки failed attempts сохраняются в `generations`, чтобы admin мог видеть failures.
+- Используйте только synthetic или явно разрешенные тестовые фото для smoke; не отправляйте документы, интимные фото или фото других людей без согласия.
+
 ## Что пока является заглушкой
 
-- Полноценная OpenAI-логика описаний, проверки карточки через модель и image generation.
+- Полноценная OpenAI-логика описаний и проверки карточки через модель.
 - История пользовательских результатов в Telegram-боте.
 - Продвинутый роутинг/UX админки и production-сборка frontend.
 
-Полноценная OpenAI-логика будет следующим шагом разработки.
+Расширение OpenAI text workflows и история результатов будут следующими шагами разработки.
 
 ## Поведение без OPENAI_API_KEY
 
-Если `OPENAI_API_KEY` пустой или равен `put_openai_key_here`, backend стартует нормально. AI-функции и endpoints возвращают понятную ошибку конфигурации, а generation endpoints создают запись со `status="failed"` и `error_message`, не роняя приложение.
+Если `OPENAI_API_KEY` пустой или равен `put_openai_key_here`, backend стартует нормально. AI-функции и endpoints возвращают понятную ошибку конфигурации, а generation endpoints создают запись со `status="failed"` и `error_message`, не роняя приложение. Для real image generation также проверьте `OPENAI_IMAGE_MODEL`, `OPENAI_IMAGE_SIZE`, `OPENAI_IMAGE_QUALITY`, `OPENAI_IMAGE_OUTPUT_FORMAT` и `OPENAI_IMAGE_TIMEOUT_SECONDS`.
 
 ## Поведение без TELEGRAM_BOT_TOKEN
 
@@ -355,8 +369,8 @@ Pytest применяет Alembic migrations к тестовой базе пер
 
 ## Следующие шаги разработки
 
-1. Подключить реальные OpenAI image/text workflows.
+1. Расширить OpenAI text workflows для описаний и проверки карточек.
 2. Улучшить UX замены уже загруженных изображений ткани и фасонов.
-3. Расширить Telegram-сценарии выбора ткани, фасона и пользовательского фото.
+3. Добавить историю пользовательских generation results в Telegram.
 4. Расширить покрытие API и добавить frontend component tests.
 5. Подготовить production frontend build и reverse proxy.
