@@ -7,7 +7,7 @@ from typing import Any
 import aiohttp
 
 from app.config import get_settings
-from app.redaction import safe_exception_summary, safe_path_for_log
+from app.redaction import safe_exception_summary, safe_path_for_log, sanitize_log_message
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +27,11 @@ def image_upload_metadata(content: bytes) -> tuple[str, str]:
 class BackendAPIError(RuntimeError):
     """Controlled backend error surfaced to bot handlers."""
 
-    def __init__(self, status: int, path: str) -> None:
+    def __init__(self, status: int, path: str, detail: str | None = None) -> None:
         super().__init__(f"Backend API returned HTTP {status} for {path}")
         self.status = status
         self.path = path
+        self.detail = detail
 
 
 class BackendUnavailableError(RuntimeError):
@@ -39,23 +40,32 @@ class BackendUnavailableError(RuntimeError):
 
 class BackendAPIClient:
     def __init__(self, base_url: str, bot_internal_token: str | None = None) -> None:
+        settings = get_settings()
         self.base_url = base_url.rstrip("/")
-        self.bot_internal_token = (
-            bot_internal_token if bot_internal_token is not None else get_settings().bot_internal_token
-        )
+        self.bot_internal_token = bot_internal_token if bot_internal_token is not None else settings.bot_internal_token
+        self.backend_request_timeout_seconds = settings.backend_request_timeout_seconds
+        self.generation_request_timeout_seconds = settings.generation_request_timeout_seconds
 
-    async def _request(self, method: str, path: str, **kwargs) -> Any:
+    async def _request(self, method: str, path: str, timeout_seconds: float | None = None, **kwargs) -> Any:
         url = f"{self.base_url}{path}"
         safe_path = safe_path_for_log(path)
         headers = kwargs.pop("headers", {}) or {}
         if self.bot_internal_token:
             headers = {**headers, "X-Bot-Token": self.bot_internal_token}
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+            request_timeout = timeout_seconds or self.backend_request_timeout_seconds
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=request_timeout)) as session:
                 async with session.request(method, url, headers=headers, **kwargs) as response:
                     if response.status >= 400:
                         logger.error("Backend error %s for %s %s", response.status, method, safe_path)
-                        raise BackendAPIError(response.status, safe_path)
+                        detail = None
+                        try:
+                            error_payload = await response.json()
+                            if isinstance(error_payload, dict) and isinstance(error_payload.get("detail"), str):
+                                detail = sanitize_log_message(error_payload["detail"])
+                        except Exception:
+                            detail = None
+                        raise BackendAPIError(response.status, safe_path, detail)
                     return await response.json()
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             logger.error("Backend is unavailable for %s %s: %s", method, safe_path, safe_exception_summary(exc))
@@ -118,4 +128,9 @@ class BackendAPIClient:
             filename=filename or inferred_filename,
             content_type=content_type or inferred_content_type,
         )
-        return await self._request("POST", "/generations/user-photo", data=form)
+        return await self._request(
+            "POST",
+            "/generations/user-photo",
+            data=form,
+            timeout_seconds=self.generation_request_timeout_seconds,
+        )

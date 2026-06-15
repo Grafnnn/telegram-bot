@@ -94,6 +94,12 @@ class Settings:
     bot_internal_token: str = BOT_INTERNAL_TOKEN_PLACEHOLDER
 
     openai_api_key: str = OPENAI_API_KEY_PLACEHOLDER
+    openai_model: str = "gpt-4o-mini"
+    openai_image_model: str = "gpt-image-1"
+    openai_image_size: str = "1024x1536"
+    openai_image_quality: str = "medium"
+    openai_image_output_format: str = "png"
+    openai_image_timeout_seconds: int = 120
 
     upload_dir: Path = Path("/app/uploads")
     max_upload_size_mb: int = 10
@@ -134,6 +140,16 @@ class Settings:
             "bot_backend_api_url": _get_value("BOT_BACKEND_API_URL", cls.bot_backend_api_url, env_file),
             "bot_internal_token": _get_value("BOT_INTERNAL_TOKEN", cls.bot_internal_token, env_file),
             "openai_api_key": _get_value("OPENAI_API_KEY", cls.openai_api_key, env_file),
+            "openai_model": _get_value("OPENAI_MODEL", cls.openai_model, env_file),
+            "openai_image_model": _get_value("OPENAI_IMAGE_MODEL", cls.openai_image_model, env_file),
+            "openai_image_size": _get_value("OPENAI_IMAGE_SIZE", cls.openai_image_size, env_file),
+            "openai_image_quality": _get_value("OPENAI_IMAGE_QUALITY", cls.openai_image_quality, env_file),
+            "openai_image_output_format": _get_value(
+                "OPENAI_IMAGE_OUTPUT_FORMAT", cls.openai_image_output_format, env_file
+            ),
+            "openai_image_timeout_seconds": _get_int(
+                "OPENAI_IMAGE_TIMEOUT_SECONDS", cls.openai_image_timeout_seconds, env_file
+            ),
             "upload_dir": Path(_get_value("UPLOAD_DIR", str(cls.upload_dir), env_file)),
             "max_upload_size_mb": _get_int("MAX_UPLOAD_SIZE_MB", cls.max_upload_size_mb, env_file),
             "max_upload_bytes": _get_optional_int("MAX_UPLOAD_BYTES", cls.max_upload_bytes, env_file),

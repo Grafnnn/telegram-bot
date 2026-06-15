@@ -1,6 +1,7 @@
 """Generation routes."""
 
 import logging
+from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
@@ -9,7 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.api.rate_limit import rate_limit_catalog_style_generation, rate_limit_user_photo_generation
 from app.api.deps import verify_bot_internal_token
-from app.config import MissingOpenAIKeyError
+from app.config import MissingOpenAIKeyError, get_settings
 from app.database import get_db
 from app.models import Fabric, GarmentStyle, Generation, TelegramUser
 from app.schemas.generation import (
@@ -22,7 +23,7 @@ from app.schemas.generation import (
 )
 from app.services import image_generation_service
 from app.services.image_generation_service import IMAGE_ERROR, IMAGE_EDIT_PROMPT, USER_PHOTO_EDIT_PROMPT
-from app.services.storage_service import resolve_upload_path, save_generated_image, save_upload
+from app.services.storage_service import UploadPathResolutionError, resolve_upload_path, save_generated_image, save_upload
 from app.utils.redaction import safe_exception_summary, sanitize_log_message
 
 router = APIRouter(prefix="/generations", tags=["generations"])
@@ -90,6 +91,94 @@ def _texture_image_url(fabric: Fabric) -> str:
     return texture.image_url
 
 
+def select_fabric_reference_image(fabric: Fabric) -> str:
+    """Return the selected fabric reference image for user-photo try-on."""
+
+    texture = next((image for image in fabric.images if image.image_type == "texture"), None)
+    main = next((image for image in fabric.images if image.image_type == "main"), None)
+    reference = texture or main
+    if reference is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "У выбранной ткани нет изображения для примерки.")
+    return reference.image_url
+
+
+def _fabric_images_by_type(fabric: Fabric, image_type: str):
+    return sorted(
+        (image for image in fabric.images if image.image_type == image_type),
+        key=lambda image: (image.sort_order, str(image.id)),
+    )
+
+
+def _is_missing_upload(exc: HTTPException) -> bool:
+    return isinstance(exc, UploadPathResolutionError) and exc.reason == "missing_file"
+
+
+def _raise_invalid_reference_url(fabric: Fabric, image_type: str, exc: HTTPException) -> None:
+    logger.warning(
+        "Selected fabric reference URL is invalid fabric_id=%s image_type=%s reason=%s error=%s",
+        fabric.id,
+        image_type,
+        getattr(exc, "reason", "unknown"),
+        safe_exception_summary(exc),
+    )
+    raise HTTPException(status.HTTP_400_BAD_REQUEST, "Selected fabric reference image URL is invalid.") from exc
+
+
+def select_fabric_reference_image_path(fabric: Fabric) -> tuple[Path, str]:
+    """Return a usable selected-fabric reference image path and image type."""
+
+    candidates = [
+        *[(image, "texture") for image in _fabric_images_by_type(fabric, "texture")],
+        *[(image, "main") for image in _fabric_images_by_type(fabric, "main")],
+    ]
+    if not candidates:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "У выбранной ткани нет изображения для примерки.")
+
+    missing_types: list[str] = []
+    for image, image_type in candidates:
+        try:
+            return resolve_upload_path(image.image_url), image_type
+        except HTTPException as exc:
+            if _is_missing_upload(exc):
+                missing_types.append(image_type)
+                logger.warning(
+                    "Selected fabric reference file is missing fabric_id=%s image_type=%s error=%s",
+                    fabric.id,
+                    image_type,
+                    safe_exception_summary(exc),
+                )
+                continue
+            _raise_invalid_reference_url(fabric, image_type, exc)
+
+    tried_types = ", ".join(dict.fromkeys(missing_types)) or "none"
+    logger.warning(
+        "Selected fabric has no usable reference image fabric_id=%s tried_types=%s",
+        fabric.id,
+        tried_types,
+    )
+    raise HTTPException(status.HTTP_400_BAD_REQUEST, "Selected fabric has no usable reference image.")
+
+
+def resolve_user_photo_upload_path(photo_url: str) -> Path:
+    try:
+        return resolve_upload_path(photo_url)
+    except HTTPException as exc:
+        logger.warning(
+            "User photo upload path resolution failed reason=%s error=%s",
+            getattr(exc, "reason", "unknown"),
+            safe_exception_summary(exc),
+        )
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "User photo upload file is missing after save.") from exc
+
+
+def prepare_user_photo_edit_inputs(photo_url: str, fabric: Fabric) -> tuple[Path, Path, str]:
+    """Resolve the user photo and selected catalog fabric reference paths."""
+
+    photo_path = resolve_user_photo_upload_path(photo_url)
+    reference_path, reference_type = select_fabric_reference_image_path(fabric)
+    return photo_path, reference_path, reference_type
+
+
 def _base_image_url(style: GarmentStyle) -> str:
     if not style.base_image_url:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "У выбранного фасона нет base image.")
@@ -105,15 +194,46 @@ def _build_catalog_style_prompt(fabric: Fabric, style: GarmentStyle) -> str:
     return "\n".join(details)
 
 
-def _build_user_photo_prompt(fabric: Fabric) -> str:
-    details = [USER_PHOTO_EDIT_PROMPT, f"Selected fabric id: {fabric.id}."]
+def build_user_photo_fabric_replacement_prompt(fabric: Fabric, garment_style: GarmentStyle | None = None) -> str:
+    details = [
+        USER_PHOTO_EDIT_PROMPT,
+        "This is an image editing task, not a new image generation task.",
+        "Use the user's uploaded photo as the base image.",
+        "Use the selected catalog fabric reference image as the only fabric source.",
+        "Replace only the visible fabric/material of the clothing item worn by the person.",
+        (
+            "Preserve the exact same person, face, hair, body, hands, skin, pose, camera angle, "
+            "background, lighting, shadows, objects, room, furniture, accessories and image composition."
+        ),
+        "Do not change identity. Do not beautify the person. Do not change body shape.",
+        "Do not add or remove objects. Do not change the scene. Do not invent another fabric.",
+        (
+            "If the original photo has multiple garments, edit only the main visible garment unless "
+            "the user context explicitly identifies another garment."
+        ),
+        "Keep all unedited regions pixel-level similar to the original photo.",
+        "Selected catalog fabric:",
+        f"Fabric id: {fabric.id}",
+        f"SKU: {fabric.sku}",
+        f"Name: {fabric.name}",
+    ]
     if fabric.description_for_gpt:
-        details.append(f"Fabric description: {fabric.description_for_gpt}")
+        details.append(f"Description: {fabric.description_for_gpt}")
     if fabric.category:
-        details.append(f"Fabric category: {fabric.category}")
+        details.append(f"Category: {fabric.category}")
     if fabric.color:
-        details.append(f"Fabric color: {fabric.color}")
+        details.append(f"Color: {fabric.color}")
+    if garment_style and garment_style.description:
+        details.append(f"Garment style context: {garment_style.description}")
+    details.append(
+        "The final clothing fabric must match the selected catalog fabric reference: "
+        "color, pattern, weave, texture, scale and visual style."
+    )
     return "\n".join(details)
+
+
+def _build_user_photo_prompt(fabric: Fabric) -> str:
+    return build_user_photo_fabric_replacement_prompt(fabric)
 
 
 def _safe_generation_error(exc: Exception) -> str:
@@ -145,7 +265,8 @@ def _active_catalog_style_generation(
 
 
 def _mark_generation_completed(generation: Generation, image_bytes: bytes) -> None:
-    generation.result_image_url = save_generated_image(image_bytes, "png")
+    extension = get_settings().openai_image_output_format.strip().lower()
+    generation.result_image_url = save_generated_image(image_bytes, extension)
     generation.status = GENERATION_STATUS_COMPLETED
     generation.error_message = None
 
@@ -250,14 +371,18 @@ async def _create_user_photo_generation(
     db.refresh(generation)
     try:
         _require_published_fabric(fabric)
-        texture_url = _texture_image_url(fabric)
-        texture_path = resolve_upload_path(texture_url)
         photo_url = await save_upload(photo, "user-photos")
         generation.user_photo_url = photo_url
-        photo_path = resolve_upload_path(photo_url)
+        photo_path, reference_path, reference_type = prepare_user_photo_edit_inputs(photo_url, fabric)
+        logger.info(
+            "User photo generation reference selected generation_id=%s fabric_id=%s image_type=%s",
+            generation.id,
+            fabric.id,
+            reference_type,
+        )
         image_bytes = image_generation_service.generate_fabric_on_user_photo(
             str(photo_path),
-            str(texture_path),
+            str(reference_path),
             prompt,
         )
         _mark_generation_completed(generation, image_bytes)

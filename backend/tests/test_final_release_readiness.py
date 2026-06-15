@@ -51,6 +51,8 @@ def test_release_checklists_are_documented() -> None:
         "BOT_INTERNAL_TOKEN",
         "VITE_API_BASE_URL",
         "VITE_BACKEND_PUBLIC_URL",
+        "OPENAI_IMAGE_MODEL",
+        "BOT_GENERATION_TIMEOUT_SECONDS",
         "alembic upgrade head",
         "/api/health",
         "X-Request-ID",
