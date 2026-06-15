@@ -19,6 +19,33 @@ class FabricImageRead(ORMModel):
     created_at: datetime
 
 
+class FabricImageFileReadiness(BaseModel):
+    image_id: str | None = None
+    image_type: str | None = None
+    image_url: str | None = None
+    file_exists: bool
+    file_ready: bool
+    ai_reference_ready: bool
+    width: int | None = None
+    height: int | None = None
+    image_format: str | None = None
+    image_mode: str | None = None
+    mime_type: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class FabricImageReadinessReport(BaseModel):
+    has_main_image_record: bool
+    has_texture_image_record: bool
+    main_file_ready: bool
+    texture_file_ready: bool
+    ai_reference_ready: bool
+    preferred_reference_type: str | None = None
+    readiness_errors: list[str] = Field(default_factory=list)
+    images: list[FabricImageFileReadiness] = Field(default_factory=list)
+
+
 FabricStatus = Literal["draft", "published", "hidden", "archived"]
 StockStatus = Literal["in_stock", "preorder", "out_of_stock"]
 

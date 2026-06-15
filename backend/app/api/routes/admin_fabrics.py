@@ -21,8 +21,18 @@ from app.api.deps import get_current_admin
 from app.database import get_db
 from app.models import Admin, Fabric, FabricImage, Generation
 from app.schemas.common import PaginatedResponse
-from app.schemas.fabric import FabricAIRequest, FabricCreate, FabricImageRead, FabricRead, FabricStatus, FabricUpdate, StockStatus
+from app.schemas.fabric import (
+    FabricAIRequest,
+    FabricCreate,
+    FabricImageRead,
+    FabricImageReadinessReport,
+    FabricRead,
+    FabricStatus,
+    FabricUpdate,
+    StockStatus,
+)
 from app.schemas.generation import GenerationRead, GenerationStatus
+from app.services.image_readiness_service import fabric_image_readiness_report
 from app.services.openai_service import check_fabric_card, generate_admin_fabric_description
 from app.services.storage_service import save_upload
 from app.utils.pagination import paginate
@@ -39,6 +49,8 @@ PUBLISH_FIELD_LABELS = {
     "description_for_gpt": "описание для GPT",
     "main image": "главное фото",
     "texture image": "фото фактуры",
+    "main image file": "файл главного фото",
+    "texture image file": "файл фото фактуры",
 }
 
 ALLOWED_FABRIC_IMAGE_TYPES = {"main", "texture", "extra"}
@@ -122,6 +134,15 @@ def get_fabric(fabric_id: UUID, _: Admin = Depends(get_current_admin), db: Sessi
     return _fabric_or_404(db, fabric_id)
 
 
+@router.get("/fabrics/{fabric_id}/image-readiness", response_model=FabricImageReadinessReport)
+def get_fabric_image_readiness(
+    fabric_id: UUID,
+    _: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    return fabric_image_readiness_report(_fabric_or_404(db, fabric_id)).to_public_dict()
+
+
 @router.patch("/fabrics/{fabric_id}", response_model=FabricRead)
 def update_fabric(fabric_id: UUID, payload: FabricUpdate, _: Admin = Depends(get_current_admin), db: Session = Depends(get_db)) -> Fabric:
     fabric = _fabric_or_404(db, fabric_id)
@@ -149,6 +170,11 @@ def _set_status(db: Session, fabric_id: UUID, value: str) -> Fabric:
             missing.append("main image")
         if "texture" not in image_types:
             missing.append("texture image")
+        readiness = fabric_image_readiness_report(fabric)
+        if "main" in image_types and not readiness.main_file_ready:
+            missing.append("main image file")
+        if "texture" in image_types and not readiness.texture_file_ready:
+            missing.append("texture image file")
         if missing:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
