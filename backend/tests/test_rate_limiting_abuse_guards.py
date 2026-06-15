@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from app.api.rate_limit import rate_limiter
 from app.config import get_settings
@@ -15,12 +17,15 @@ from app.models.fabric_image import FabricImage
 from app.models.telegram_user import TelegramUser
 
 BOT_HEADERS = {"X-Bot-Token": "test_bot_internal_token"}
-PNG_1X1 = (
-    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
-    b"\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
-    b"\x00\x00\x00\rIDATx\x9cc\xf8\xff\xff?\x00\x05\xfe\x02"
-    b"\xfeA\xde\xa6\x9b\x00\x00\x00\x00IEND\xaeB`\x82"
-)
+
+
+def _png_bytes(size: tuple[int, int] = (1, 1), color: tuple[int, int, int] = (20, 120, 180)) -> bytes:
+    buffer = BytesIO()
+    Image.new("RGB", size, color=color).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+PNG_1X1 = _png_bytes()
 SENSITIVE_STRINGS = {
     "test_bot_internal_token",
     "admin12345",
@@ -81,7 +86,7 @@ def _create_fabric() -> str:
         image_url = f"/uploads/fabrics/{uuid4().hex}.png"
         path = get_settings().upload_dir / image_url.removeprefix("/uploads/")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(PNG_1X1)
+        Image.new("RGB", (300, 300), color=(80, 140, 210)).save(path, format="PNG")
         db.add(FabricImage(fabric_id=fabric.id, image_url=image_url, image_type="texture", sort_order=1))
         db.commit()
         return str(fabric.id)

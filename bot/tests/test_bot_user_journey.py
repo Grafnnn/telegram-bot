@@ -57,6 +57,13 @@ class FakeMessage:
         self.photos.append((photo, caption, reply_markup))
 
 
+class FailingPhotoMessage(FakeMessage):
+    async def answer_photo(self, photo: str, caption: str, reply_markup=None) -> None:
+        raise RuntimeError(
+            f"TelegramBadRequest Authorization: Bearer {SECRET_TOKEN} data:image/png;base64,AAAA /app/uploads/fabrics/raw.png"
+        )
+
+
 class FakeCallback:
     def __init__(self, data: str | None, message: FakeMessage | None = None) -> None:
         self.data = data
@@ -219,6 +226,33 @@ def test_catalog_backend_unavailable_and_empty_catalog_are_friendly(monkeypatch)
     run(catalog.show_catalog(empty_message))
 
     assert empty_message.answers[-1][0] == "Пока нет опубликованных тканей."
+
+
+def test_catalog_preview_image_failure_falls_back_to_text_safely(caplog) -> None:
+    message = FailingPhotoMessage()
+    fabric = {
+        "id": str(uuid4()),
+        "name": "Шелк молочный",
+        "sku": "SILK-001",
+        "category": "silk",
+        "price_per_meter": "1200.00",
+        "currency": "RUB",
+        "stock_status": "preorder",
+        "images": [{"image_type": "main", "image_url": "/uploads/fabrics/missing.png"}],
+    }
+
+    with caplog.at_level(logging.WARNING, logger="app.handlers.fabric_selection"):
+        run(fabric_selection.answer_fabric_card(message, fabric))
+
+    assert not message.photos
+    assert message.answers
+    assert "Шелк молочный" in message.answers[-1][0]
+    assert message.answers[-1][1] is not None
+    assert "Could not send fabric image" in caplog.text
+    assert SECRET_TOKEN not in caplog.text
+    assert "Bearer secret" not in caplog.text
+    assert "data:image/png;base64" not in caplog.text
+    assert "/app/uploads" not in caplog.text
 
 
 def test_invalid_callback_data_is_rejected_before_backend_call(monkeypatch) -> None:

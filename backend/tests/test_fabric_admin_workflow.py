@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from PIL import Image
 
-PNG_1X1 = (
-    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
-    b"\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
-    b"\x00\x00\x00\rIDATx\x9cc\xf8\xff\xff?\x00\x05\xfe\x02"
-    b"\xfeA\xde\xa6\x9b\x00\x00\x00\x00IEND\xaeB`\x82"
-)
+from app.config import get_settings
+
+
+def _png_bytes(size: tuple[int, int] = (1, 1), color: tuple[int, int, int] = (20, 120, 180)) -> bytes:
+    buffer = BytesIO()
+    Image.new("RGB", size, color=color).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+PNG_1X1 = _png_bytes()
 
 
 def _auth_headers(token: str) -> dict[str, str]:
@@ -80,6 +86,17 @@ def test_admin_can_create_upload_publish_fabric_and_see_it_in_public_catalog(cli
     image_types = {image["image_type"] for image in fabric_detail["images"]}
     assert {"main", "texture"}.issubset(image_types)
 
+    readiness_response = client.get(f"/api/admin/fabrics/{fabric_id}/image-readiness", headers=headers)
+    assert readiness_response.status_code == 200, readiness_response.text
+    readiness = readiness_response.json()
+    assert readiness["has_main_image_record"] is True
+    assert readiness["has_texture_image_record"] is True
+    assert readiness["main_file_ready"] is True
+    assert readiness["texture_file_ready"] is True
+    assert readiness["ai_reference_ready"] is False
+    assert "main:tiny_image" in readiness["readiness_errors"]
+    assert "texture:tiny_image" in readiness["readiness_errors"]
+
     check_after_response = client.post(
         "/api/admin/fabrics/ai/check-card",
         json={"fabric_data": fabric_detail},
@@ -123,3 +140,38 @@ def test_admin_can_create_upload_publish_fabric_and_see_it_in_public_catalog(cli
     assert recommendation_payload["preferences"]["garment_type"] == "летнее платье"
     assert recommendation_payload["preferences"]["season"] == "лето"
     assert all(item["reason"] for item in recommendation_payload["items"])
+
+
+def test_publish_rejects_image_records_with_missing_upload_files(client: TestClient) -> None:
+    login_response = client.post(
+        "/api/auth/login",
+        json={"email": "admin@example.com", "password": "admin12345"},
+    )
+    assert login_response.status_code == 200, login_response.text
+    headers = _auth_headers(login_response.json()["access_token"])
+
+    create_response = client.post(
+        "/api/admin/fabrics",
+        json={
+            "sku": f"MISSING-FILE-{uuid4().hex[:8]}",
+            "name": "Ткань с потерянным файлом",
+            "category": "cotton",
+            "price_per_meter": 1000,
+            "currency": "RUB",
+            "stock_status": "in_stock",
+            "description_for_gpt": "Тестовое описание ткани для GPT",
+        },
+        headers=headers,
+    )
+    assert create_response.status_code == 201, create_response.text
+    fabric_id = create_response.json()["id"]
+    main_image = _upload_png(client, fabric_id, "main", 0, headers)
+    _upload_png(client, fabric_id, "texture", 1, headers)
+
+    main_path = get_settings().upload_dir / main_image["image_url"].removeprefix("/uploads/")
+    main_path.unlink()
+
+    publish_response = client.post(f"/api/admin/fabrics/{fabric_id}/publish", headers=headers)
+
+    assert publish_response.status_code == 400, publish_response.text
+    assert "файл главного фото" in publish_response.json()["detail"]

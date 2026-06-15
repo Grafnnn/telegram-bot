@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy import select
 
 from app.config import get_settings
@@ -19,12 +21,14 @@ from app.models.telegram_user import TelegramUser
 BOT_HEADERS = {"X-Bot-Token": "test_bot_internal_token"}
 WRONG_BOT_HEADERS = {"X-Bot-Token": "wrong"}
 
-PNG_1X1 = (
-    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
-    b"\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
-    b"\x00\x00\x00\rIDATx\x9cc\xf8\xff\xff?\x00\x05\xfe\x02"
-    b"\xfeA\xde\xa6\x9b\x00\x00\x00\x00IEND\xaeB`\x82"
-)
+
+def _png_bytes(size: tuple[int, int] = (1, 1), color: tuple[int, int, int] = (20, 120, 180)) -> bytes:
+    buffer = BytesIO()
+    Image.new("RGB", size, color=color).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+PNG_1X1 = _png_bytes()
 
 
 def _admin_headers(client: TestClient) -> dict[str, str]:
@@ -36,7 +40,7 @@ def _admin_headers(client: TestClient) -> dict[str, str]:
 def _write_upload(relative_url: str) -> None:
     path = get_settings().upload_dir / relative_url.removeprefix("/uploads/")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(PNG_1X1)
+    Image.new("RGB", (300, 300), color=(40, 120, 190)).save(path, format="PNG")
 
 
 def _create_fabric(
@@ -179,7 +183,7 @@ def test_user_photo_generation_unpublished_fabric_persists_failed_record(client:
     fabric_id = _create_fabric(status="draft")
     telegram_id = _create_telegram_user()
 
-    response = _post_user_photo(client, fabric_id, PNG_1X1, "image/png", BOT_HEADERS,  telegram_id=telegram_id)
+    response = _post_user_photo(client, fabric_id, PNG_1X1, "image/png", BOT_HEADERS, telegram_id=telegram_id)
 
     assert response.status_code == 400, response.text
     assert "опубликован" in response.json()["detail"]
@@ -381,7 +385,7 @@ def test_user_photo_generation_missing_reference_files_fail_without_provider_or_
     assert admin_generation["user_photo_url"].startswith("/uploads/user-photos/")
     assert admin_generation["error_message"] == "Selected fabric has no usable reference image."
     log_text = "\n".join(log_messages)
-    assert "Selected fabric reference file is missing" in log_text
+    assert "Selected fabric has no AI-ready reference image" in log_text
     assert "OPENAI_API_KEY" not in log_text
     assert "BOT_INTERNAL_TOKEN" not in log_text
     assert "data:image" not in log_text
