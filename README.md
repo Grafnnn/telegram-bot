@@ -114,6 +114,19 @@ Runtime diagnostics:
 - Provider/OpenAI failures не должны попадать наружу как raw traceback.
 - User-photo generation может занимать 1–2 минуты; bot использует отдельный `BOT_GENERATION_TIMEOUT_SECONDS` для этого endpoint.
 
+### Fabric image readiness
+
+Для AI-примерки одной записи в таблице `fabric_images` недостаточно: соответствующий файл должен реально существовать в persistent `UPLOAD_DIR`, открываться как изображение и быть достаточно большим для provider input.
+
+Production-like правила:
+
+- Монтируйте persistent storage для backend uploads; на Render staging используйте `UPLOAD_DIR=/var/data/uploads` при подключенном Render Disk.
+- Загружайте `main` и `texture` через admin UI/API, а не ручной записью в базу.
+- Перед real generation smoke проверьте admin endpoint `GET /api/admin/fabrics/{fabric_id}/image-readiness`.
+- `ai_reference_ready=true` означает, что хотя бы `texture` или `main` подходит как reference image; preferred order: `texture`, затем `main` той же ткани.
+- Missing/broken/tiny/unsupported images дают controlled validation error; backend не должен подставлять random/default/other fabric.
+- Catalog preview image failures должны оставаться non-blocking: бот отправляет текстовую карточку и кнопки, а logs не раскрывают secrets, raw filesystem paths или image bytes/base64.
+
 ## Post-merge smoke checks
 
 После merge/deploy выполните короткую проверку:

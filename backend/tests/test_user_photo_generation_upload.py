@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy import select
 
 from app.config import get_settings
@@ -36,7 +37,7 @@ def _admin_headers(client: TestClient) -> dict[str, str]:
 def _write_upload(relative_url: str) -> None:
     path = get_settings().upload_dir / relative_url.removeprefix("/uploads/")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(PNG_1X1)
+    Image.new("RGB", (300, 300), color=(40, 120, 190)).save(path, format="PNG")
 
 
 def _create_fabric(

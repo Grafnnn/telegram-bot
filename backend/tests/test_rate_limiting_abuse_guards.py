@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from app.api.rate_limit import rate_limiter
 from app.config import get_settings
@@ -81,7 +82,7 @@ def _create_fabric() -> str:
         image_url = f"/uploads/fabrics/{uuid4().hex}.png"
         path = get_settings().upload_dir / image_url.removeprefix("/uploads/")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(PNG_1X1)
+        Image.new("RGB", (300, 300), color=(80, 140, 210)).save(path, format="PNG")
         db.add(FabricImage(fabric_id=fabric.id, image_url=image_url, image_type="texture", sort_order=1))
         db.commit()
         return str(fabric.id)

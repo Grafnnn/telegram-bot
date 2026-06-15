@@ -24,6 +24,7 @@ _HEADER_VALUE_RE = re.compile(r"(?i)\b(authorization|x-bot-token)\s*[:=]\s*(bear
 _KEY_VALUE_RE = re.compile(r"(?i)\b(token|secret|password|api[_-]?key)\s*[:=]\s*[^\s,;]+")
 _BEARER_RE = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+")
 _DATA_URI_RE = re.compile(r"(?i)data:image/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+")
+_UPLOAD_PATH_RE = re.compile(r"(?i)(?:[A-Za-z]:)?(?:/[^\s,;:]+)*/uploads/[^\s,;]+")
 _LONG_BASE64_RE = re.compile(r"\b[A-Za-z0-9+/]{80,}={0,2}\b")
 _UUID_RE = re.compile(
     r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
@@ -44,6 +45,7 @@ def is_sensitive_key(key: object) -> bool:
 def sanitize_log_message(value: object) -> str:
     text = str(value)
     text = _DATA_URI_RE.sub("data:image/[REDACTED]", text)
+    text = _UPLOAD_PATH_RE.sub("/uploads/[REDACTED_PATH]", text)
     text = _HEADER_VALUE_RE.sub(lambda match: f"{match.group(1)}: {REDACTED}", text)
     text = _KEY_VALUE_RE.sub(lambda match: f"{match.group(1)}={REDACTED}", text)
     text = _BEARER_RE.sub(f"Bearer {REDACTED}", text)

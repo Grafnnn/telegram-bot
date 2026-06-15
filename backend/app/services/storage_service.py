@@ -1,10 +1,12 @@
 """File storage service for uploaded and generated images."""
 
 from collections.abc import Callable
+from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile, status
+from PIL import Image, UnidentifiedImageError
 
 from app.config import get_settings
 
@@ -49,6 +51,11 @@ def _validate_upload_content(file: UploadFile, content: bytes) -> str:
         )
     if not IMAGE_SIGNATURES[content_type](content):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Файл не похож на корректное изображение.")
+    try:
+        with Image.open(BytesIO(content)) as image:
+            image.verify()
+    except (OSError, UnidentifiedImageError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Файл не похож на корректное изображение.") from exc
     return ext
 
 

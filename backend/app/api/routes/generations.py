@@ -23,7 +23,8 @@ from app.schemas.generation import (
 )
 from app.services import image_generation_service
 from app.services.image_generation_service import IMAGE_ERROR, IMAGE_EDIT_PROMPT, USER_PHOTO_EDIT_PROMPT
-from app.services.storage_service import UploadPathResolutionError, resolve_upload_path, save_generated_image, save_upload
+from app.services.image_readiness_service import select_ready_fabric_reference_path
+from app.services.storage_service import resolve_upload_path, save_generated_image, save_upload
 from app.utils.redaction import safe_exception_summary, sanitize_log_message
 
 router = APIRouter(prefix="/generations", tags=["generations"])
@@ -102,61 +103,18 @@ def select_fabric_reference_image(fabric: Fabric) -> str:
     return reference.image_url
 
 
-def _fabric_images_by_type(fabric: Fabric, image_type: str):
-    return sorted(
-        (image for image in fabric.images if image.image_type == image_type),
-        key=lambda image: (image.sort_order, str(image.id)),
-    )
-
-
-def _is_missing_upload(exc: HTTPException) -> bool:
-    return isinstance(exc, UploadPathResolutionError) and exc.reason == "missing_file"
-
-
-def _raise_invalid_reference_url(fabric: Fabric, image_type: str, exc: HTTPException) -> None:
-    logger.warning(
-        "Selected fabric reference URL is invalid fabric_id=%s image_type=%s reason=%s error=%s",
-        fabric.id,
-        image_type,
-        getattr(exc, "reason", "unknown"),
-        safe_exception_summary(exc),
-    )
-    raise HTTPException(status.HTTP_400_BAD_REQUEST, "Selected fabric reference image URL is invalid.") from exc
-
-
 def select_fabric_reference_image_path(fabric: Fabric) -> tuple[Path, str]:
     """Return a usable selected-fabric reference image path and image type."""
 
-    candidates = [
-        *[(image, "texture") for image in _fabric_images_by_type(fabric, "texture")],
-        *[(image, "main") for image in _fabric_images_by_type(fabric, "main")],
-    ]
-    if not candidates:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "У выбранной ткани нет изображения для примерки.")
-
-    missing_types: list[str] = []
-    for image, image_type in candidates:
-        try:
-            return resolve_upload_path(image.image_url), image_type
-        except HTTPException as exc:
-            if _is_missing_upload(exc):
-                missing_types.append(image_type)
-                logger.warning(
-                    "Selected fabric reference file is missing fabric_id=%s image_type=%s error=%s",
-                    fabric.id,
-                    image_type,
-                    safe_exception_summary(exc),
-                )
-                continue
-            _raise_invalid_reference_url(fabric, image_type, exc)
-
-    tried_types = ", ".join(dict.fromkeys(missing_types)) or "none"
-    logger.warning(
-        "Selected fabric has no usable reference image fabric_id=%s tried_types=%s",
-        fabric.id,
-        tried_types,
-    )
-    raise HTTPException(status.HTTP_400_BAD_REQUEST, "Selected fabric has no usable reference image.")
+    try:
+        return select_ready_fabric_reference_path(fabric)
+    except HTTPException as exc:
+        logger.warning(
+            "Selected fabric has no AI-ready reference image fabric_id=%s error=%s",
+            fabric.id,
+            safe_exception_summary(exc),
+        )
+        raise
 
 
 def resolve_user_photo_upload_path(photo_url: str) -> Path:
