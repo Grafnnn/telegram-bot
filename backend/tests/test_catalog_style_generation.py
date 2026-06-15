@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 from pydantic import ValidationError
 from sqlalchemy import select
 
@@ -22,12 +24,14 @@ from app.schemas.generation import GenerationRead
 BOT_HEADERS = {"X-Bot-Token": "test_bot_internal_token"}
 WRONG_BOT_HEADERS = {"X-Bot-Token": "wrong"}
 
-PNG_1X1 = (
-    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
-    b"\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
-    b"\x00\x00\x00\rIDATx\x9cc\xf8\xff\xff?\x00\x05\xfe\x02"
-    b"\xfeA\xde\xa6\x9b\x00\x00\x00\x00IEND\xaeB`\x82"
-)
+
+def _png_bytes(size: tuple[int, int] = (1, 1), color: tuple[int, int, int] = (20, 120, 180)) -> bytes:
+    buffer = BytesIO()
+    Image.new("RGB", size, color=color).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+PNG_1X1 = _png_bytes()
 
 
 def _write_upload(relative_url: str) -> None:

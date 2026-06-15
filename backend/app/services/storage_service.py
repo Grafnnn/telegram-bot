@@ -54,7 +54,7 @@ def _validate_upload_content(file: UploadFile, content: bytes) -> str:
     try:
         with Image.open(BytesIO(content)) as image:
             image.verify()
-    except (OSError, UnidentifiedImageError) as exc:
+    except (OSError, SyntaxError, UnidentifiedImageError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Файл не похож на корректное изображение.") from exc
     return ext
 

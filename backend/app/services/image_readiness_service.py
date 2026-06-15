@@ -138,7 +138,7 @@ def check_uploaded_image_readiness(
             readiness.image_format = image_file.format
             readiness.image_mode = image_file.mode
             readiness.mime_type = Image.MIME.get(image_file.format or "")
-    except (OSError, UnidentifiedImageError) as exc:
+    except (OSError, SyntaxError, UnidentifiedImageError) as exc:
         return readiness.mark_error("unreadable_image")
 
     if readiness.mime_type not in ALLOWED_IMAGE_MIME_TYPES:
