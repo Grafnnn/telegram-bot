@@ -52,6 +52,7 @@ class GenerationRead(ORMModel):
     fabric_id: UUID | None = None
     garment_style_id: UUID | None = None
     user_photo_url: str | None = None
+    mask_image_url: str | None = None
     result_image_url: str | None = None
     mode: str
     prompt: str | None = None
