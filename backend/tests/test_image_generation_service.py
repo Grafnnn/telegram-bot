@@ -68,9 +68,43 @@ def test_user_photo_generation_uses_openai_sdk_config_and_closes_files(tmp_path,
     assert captured["size"] == "1024x1536"
     assert captured["quality"] == "medium"
     assert captured["output_format"] == "png"
+    assert "mask" not in captured
     images = captured["image"]
     assert len(images) == 2
     assert all(image.closed for image in images)
+
+
+def test_user_photo_generation_can_send_optional_mask(tmp_path, monkeypatch) -> None:
+    user_photo = tmp_path / "user-photo.png"
+    texture = tmp_path / "texture.png"
+    mask = tmp_path / "mask.png"
+    for path in (user_photo, texture, mask):
+        _write_image(path)
+    captured: dict[str, object] = {}
+
+    class FakeImages:
+        def edit(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(data=[SimpleNamespace(b64_json=base64.b64encode(PNG_1X1).decode("ascii"))])
+
+    class FakeClient:
+        images = FakeImages()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-provider")
+    get_settings.cache_clear()
+    monkeypatch.setattr(image_generation_service, "_create_openai_client", lambda _api_key: FakeClient())
+
+    result = image_generation_service.generate_fabric_on_user_photo(
+        str(user_photo),
+        str(texture),
+        "masked clothing",
+        mask_image_path=str(mask),
+    )
+
+    assert result == PNG_1X1
+    assert "mask" in captured
+    assert captured["mask"].closed
+    assert all(image.closed for image in captured["image"])
 
 
 def test_catalog_style_generation_can_send_mask(tmp_path, monkeypatch) -> None:

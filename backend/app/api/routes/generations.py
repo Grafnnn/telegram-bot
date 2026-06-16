@@ -24,6 +24,7 @@ from app.schemas.generation import (
 from app.services import image_generation_service
 from app.services.image_generation_service import IMAGE_ERROR, IMAGE_EDIT_PROMPT, USER_PHOTO_EDIT_PROMPT
 from app.services.image_readiness_service import select_ready_fabric_reference_path
+from app.services.mask_service import prepare_user_photo_mask
 from app.services.storage_service import resolve_upload_path, save_generated_image, save_upload
 from app.utils.redaction import safe_exception_summary, sanitize_log_message
 
@@ -152,7 +153,12 @@ def _build_catalog_style_prompt(fabric: Fabric, style: GarmentStyle) -> str:
     return "\n".join(details)
 
 
-def build_user_photo_fabric_replacement_prompt(fabric: Fabric, garment_style: GarmentStyle | None = None) -> str:
+def build_user_photo_fabric_replacement_prompt(
+    fabric: Fabric,
+    garment_style: GarmentStyle | None = None,
+    *,
+    mask_used: bool = False,
+) -> str:
     details = [
         USER_PHOTO_EDIT_PROMPT,
         "This is an image editing task, not a new image generation task.",
@@ -183,6 +189,11 @@ def build_user_photo_fabric_replacement_prompt(fabric: Fabric, garment_style: Ga
         details.append(f"Color: {fabric.color}")
     if garment_style and garment_style.description:
         details.append(f"Garment style context: {garment_style.description}")
+    if mask_used:
+        details.append(
+            "A clothing edit mask is provided. Edit only the transparent/editable clothing region defined by the mask. "
+            "Preserve all non-editable regions exactly."
+        )
     details.append(
         "The final clothing fabric must match the selected catalog fabric reference: "
         "color, pattern, weave, texture, scale and visual style."
@@ -190,8 +201,8 @@ def build_user_photo_fabric_replacement_prompt(fabric: Fabric, garment_style: Ga
     return "\n".join(details)
 
 
-def _build_user_photo_prompt(fabric: Fabric) -> str:
-    return build_user_photo_fabric_replacement_prompt(fabric)
+def _build_user_photo_prompt(fabric: Fabric, *, mask_used: bool = False) -> str:
+    return build_user_photo_fabric_replacement_prompt(fabric, mask_used=mask_used)
 
 
 def _safe_generation_error(exc: Exception) -> str:
@@ -300,9 +311,10 @@ async def create_user_photo_generation(
     telegram_user_id: UUID | None = Form(None),
     fabric_id: UUID = Form(...),
     photo: UploadFile = File(...),
+    mask: UploadFile | None = File(None),
     db: Session = Depends(get_db),
 ) -> Generation:
-    return await _create_user_photo_generation(telegram_id, telegram_user_id, fabric_id, photo, db)
+    return await _create_user_photo_generation(telegram_id, telegram_user_id, fabric_id, photo, mask, db)
 
 
 async def _create_user_photo_generation(
@@ -310,6 +322,7 @@ async def _create_user_photo_generation(
     telegram_user_id: UUID | None,
     fabric_id: UUID,
     photo: UploadFile,
+    mask: UploadFile | None,
     db: Session,
 ) -> Generation:
     linked_user_id = telegram_user_id
@@ -332,16 +345,23 @@ async def _create_user_photo_generation(
         photo_url = await save_upload(photo, "user-photos")
         generation.user_photo_url = photo_url
         photo_path, reference_path, reference_type = prepare_user_photo_edit_inputs(photo_url, fabric)
+        mask_result = await prepare_user_photo_mask(photo_path, mask)
+        if mask_result is not None:
+            generation.mask_image_url = mask_result.mask_image_url
+            prompt = _build_user_photo_prompt(fabric, mask_used=True)
+            generation.prompt = prompt
         logger.info(
-            "User photo generation reference selected generation_id=%s fabric_id=%s image_type=%s",
+            "User photo generation reference selected generation_id=%s fabric_id=%s image_type=%s mask_mode=%s",
             generation.id,
             fabric.id,
             reference_type,
+            mask_result.mode if mask_result else "none",
         )
         image_bytes = image_generation_service.generate_fabric_on_user_photo(
             str(photo_path),
             str(reference_path),
             prompt,
+            mask_image_path=str(mask_result.mask_path) if mask_result else None,
         )
         _mark_generation_completed(generation, image_bytes)
     except HTTPException as exc:

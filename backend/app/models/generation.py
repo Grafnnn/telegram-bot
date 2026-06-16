@@ -18,6 +18,7 @@ class Generation(Base):
     fabric_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("fabrics.id", ondelete="SET NULL"), index=True)
     garment_style_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("garment_styles.id", ondelete="SET NULL"), index=True)
     user_photo_url: Mapped[str | None] = mapped_column(Text)
+    mask_image_url: Mapped[str | None] = mapped_column(Text)
     result_image_url: Mapped[str | None] = mapped_column(Text)
     mode: Mapped[str] = mapped_column(String, nullable=False)
     prompt: Mapped[str | None] = mapped_column(Text)

@@ -113,7 +113,12 @@ def generate_fabric_on_catalog_style(
     return _edit_images([base_image_path, fabric_texture_path], prompt, mask_image_path=mask_image_path)
 
 
-def generate_fabric_on_user_photo(user_photo_path: str, fabric_texture_path: str, prompt: str) -> bytes:
+def generate_fabric_on_user_photo(
+    user_photo_path: str,
+    fabric_texture_path: str,
+    prompt: str,
+    mask_image_path: str | None = None,
+) -> bytes:
     """Generate selected fabric texture on a user's uploaded clothing photo."""
 
-    return _edit_images([user_photo_path, fabric_texture_path], prompt)
+    return _edit_images([user_photo_path, fabric_texture_path], prompt, mask_image_path=mask_image_path)

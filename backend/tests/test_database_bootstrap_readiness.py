@@ -119,4 +119,4 @@ def test_alembic_has_single_expected_head() -> None:
     alembic_config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
     script = ScriptDirectory.from_config(alembic_config)
 
-    assert script.get_heads() == ["0001_initial_schema"]
+    assert script.get_heads() == ["0002_generation_mask_url"]

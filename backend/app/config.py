@@ -54,6 +54,12 @@ def _get_int(name: str, default: int, env_file: dict[str, str]) -> int:
     return int(_get_value(name, str(default), env_file))
 
 
+def _get_float(name: str, default: float, env_file: dict[str, str]) -> float:
+    """Return a float environment value."""
+
+    return float(_get_value(name, str(default), env_file))
+
+
 def _get_bool(name: str, default: bool, env_file: dict[str, str]) -> bool:
     """Return a boolean environment value."""
 
@@ -100,6 +106,12 @@ class Settings:
     openai_image_quality: str = "medium"
     openai_image_output_format: str = "png"
     openai_image_timeout_seconds: int = 120
+
+    user_photo_mask_mode: str = "off"
+    user_photo_mask_min_coverage_percent: float = 3.0
+    user_photo_mask_max_coverage_percent: float = 80.0
+    user_photo_mask_dilate_pixels: int = 0
+    user_photo_mask_debug_save: bool = False
 
     upload_dir: Path = Path("/app/uploads")
     max_upload_size_mb: int = 10
@@ -149,6 +161,23 @@ class Settings:
             ),
             "openai_image_timeout_seconds": _get_int(
                 "OPENAI_IMAGE_TIMEOUT_SECONDS", cls.openai_image_timeout_seconds, env_file
+            ),
+            "user_photo_mask_mode": _get_value("USER_PHOTO_MASK_MODE", cls.user_photo_mask_mode, env_file),
+            "user_photo_mask_min_coverage_percent": _get_float(
+                "USER_PHOTO_MASK_MIN_COVERAGE_PERCENT",
+                cls.user_photo_mask_min_coverage_percent,
+                env_file,
+            ),
+            "user_photo_mask_max_coverage_percent": _get_float(
+                "USER_PHOTO_MASK_MAX_COVERAGE_PERCENT",
+                cls.user_photo_mask_max_coverage_percent,
+                env_file,
+            ),
+            "user_photo_mask_dilate_pixels": _get_int(
+                "USER_PHOTO_MASK_DILATE_PIXELS", cls.user_photo_mask_dilate_pixels, env_file
+            ),
+            "user_photo_mask_debug_save": _get_bool(
+                "USER_PHOTO_MASK_DEBUG_SAVE", cls.user_photo_mask_debug_save, env_file
             ),
             "upload_dir": Path(_get_value("UPLOAD_DIR", str(cls.upload_dir), env_file)),
             "max_upload_size_mb": _get_int("MAX_UPLOAD_SIZE_MB", cls.max_upload_size_mb, env_file),
