@@ -14,7 +14,17 @@ from app.config import get_settings
 from app.handler_utils import friendly_api_error_message, parse_callback_uuid
 from app.handlers import catalog
 from app.handlers.selected import answer_photo_or_text, generation_result_url
-from app.keyboards import try_on_result_keyboard
+from app.keyboards import (
+    LEGACY_TRY_ON_CATALOG_CALLBACK,
+    LEGACY_TRY_ON_REGENERATE_CALLBACK,
+    LEGACY_TRY_ON_UPLOAD_ANOTHER_CALLBACK,
+    TRY_ON_CATALOG_CALLBACK,
+    TRY_ON_CHOOSE_OTHER_FABRIC_CALLBACK,
+    TRY_ON_RETRY_SAME_FABRIC_CALLBACK,
+    TRY_ON_SEND_NEW_PHOTO_CALLBACK,
+    try_on_recovery_keyboard,
+    try_on_success_keyboard,
+)
 from app.redaction import safe_exception_summary
 from app.states import TryOnPhotoStates
 
@@ -31,13 +41,17 @@ GENERATION_PROGRESS_MESSAGE = "Генерирую примерку ткани, �
 GENERATION_UNAVAILABLE_MESSAGE = (
     "Генерация временно не настроена на сервере. Каталог и выбор ткани работают."
 )
-GENERATION_FAILED_MESSAGE = "Не удалось сгенерировать примерку. Попробуйте ещё раз или выберите другое фото."
-GENERATION_TIMEOUT_MESSAGE = "Генерация заняла слишком много времени. Попробуйте ещё раз или загрузите другое фото."
-TRY_ON_VALIDATION_MESSAGE = (
-    "Не удалось заменить ткань на фото. Попробуйте другое фото: одежда должна быть хорошо видна."
-)
-TRY_ON_NO_REFERENCE_IMAGE_MESSAGE = "У выбранной ткани нет изображения для примерки. Выберите другую ткань."
+GENERATION_FAILED_MESSAGE = "Не удалось выполнить примерку. Попробуйте другое фото или выберите другую ткань."
+GENERATION_TIMEOUT_MESSAGE = "Генерация заняла слишком много времени. Попробуйте другое фото или выберите ткань заново."
+TRY_ON_PHOTO_PROCESSING_MESSAGE = "Не удалось обработать фото. Попробуйте отправить другое изображение."
+TRY_ON_NO_REFERENCE_IMAGE_MESSAGE = "Эта ткань сейчас недоступна для примерки. Выберите другую ткань из каталога."
 TRY_ON_NO_FABRIC_MESSAGE = "Сначала выберите ткань из каталога, затем отправьте фото."
+TRY_ON_LOST_STATE_MESSAGE = "Не нашёл выбранную ткань для примерки. Откройте каталог и выберите ткань заново."
+
+RETRY_SAME_FABRIC_CALLBACKS = {TRY_ON_RETRY_SAME_FABRIC_CALLBACK, LEGACY_TRY_ON_REGENERATE_CALLBACK}
+SEND_NEW_PHOTO_CALLBACKS = {TRY_ON_SEND_NEW_PHOTO_CALLBACK, LEGACY_TRY_ON_UPLOAD_ANOTHER_CALLBACK}
+CATALOG_CALLBACKS = {TRY_ON_CATALOG_CALLBACK, LEGACY_TRY_ON_CATALOG_CALLBACK}
+CHOOSE_OTHER_FABRIC_CALLBACKS = {TRY_ON_CHOOSE_OTHER_FABRIC_CALLBACK}
 
 
 def backend_client() -> BackendAPIClient:
@@ -54,7 +68,45 @@ def _failed_generation_message(result: dict[str, Any] | None) -> str:
     error_message = str((result or {}).get("error_message") or "").lower()
     if "openai api key" in error_message or "не настро" in error_message:
         return GENERATION_UNAVAILABLE_MESSAGE
+    if any(marker in error_message for marker in ["изображения для примерки", "опубликован", "fabric"]):
+        return TRY_ON_NO_REFERENCE_IMAGE_MESSAGE
+    if any(marker in error_message for marker in ["photo", "image", "фото", "изображ"]):
+        return TRY_ON_PHOTO_PROCESSING_MESSAGE
     return GENERATION_FAILED_MESSAGE
+
+
+def _backend_error_message(exc: BackendAPIError) -> str:
+    detail = (exc.detail or "").lower()
+    if any(marker in detail for marker in ["изображения для примерки", "опубликован", "fabric"]):
+        return TRY_ON_NO_REFERENCE_IMAGE_MESSAGE
+    return TRY_ON_PHOTO_PROCESSING_MESSAGE
+
+
+async def _open_catalog_from_message(message: Message) -> None:
+    await catalog.show_catalog(message)
+
+
+async def _recover_to_catalog(callback: CallbackQuery, state: FSMContext, message: str) -> None:
+    await state.clear()
+    if callback.message:
+        await callback.message.answer(message, reply_markup=try_on_recovery_keyboard())
+        await _open_catalog_from_message(callback.message)
+
+
+async def _ask_for_new_photo_for_current_fabric(
+    callback: CallbackQuery,
+    state: FSMContext,
+    prompt: str,
+) -> None:
+    data = await state.get_data()
+    if not data.get("fabric_id"):
+        await _recover_to_catalog(callback, state, TRY_ON_LOST_STATE_MESSAGE)
+        return
+    await state.set_state(TryOnPhotoStates.waiting_for_photo)
+    if callback.message:
+        await callback.message.answer(
+            f"{prompt}: {_fabric_summary(data)}.\n{PHOTO_SAFETY_COPY}"
+        )
 
 
 async def _download_telegram_photo(message: Message, file_id: str) -> bytes:
@@ -93,7 +145,7 @@ async def _generate_from_photo(message: Message, state: FSMContext, file_id: str
     fabric_id = data.get("fabric_id")
     if not fabric_id:
         await state.clear()
-        await message.answer(TRY_ON_NO_FABRIC_MESSAGE)
+        await message.answer(TRY_ON_NO_FABRIC_MESSAGE, reply_markup=try_on_recovery_keyboard())
         return
     await state.update_data(last_photo_file_id=file_id)
     await message.answer(GENERATION_PROGRESS_MESSAGE)
@@ -113,43 +165,40 @@ async def _generate_from_photo(message: Message, state: FSMContext, file_id: str
         )
     except BackendAPIError as exc:
         if exc.status in {400, 404, 422}:
-            if exc.detail and "изображения для примерки" in exc.detail:
-                await message.answer(TRY_ON_NO_REFERENCE_IMAGE_MESSAGE, reply_markup=try_on_result_keyboard())
-            else:
-                await message.answer(TRY_ON_VALIDATION_MESSAGE, reply_markup=try_on_result_keyboard())
+            await message.answer(_backend_error_message(exc), reply_markup=try_on_recovery_keyboard())
         else:
-            await message.answer(friendly_api_error_message(exc), reply_markup=try_on_result_keyboard())
+            await message.answer(friendly_api_error_message(exc), reply_markup=try_on_recovery_keyboard())
         return
     except BackendUnavailableError as exc:
         logger.warning("User photo try-on timed out safely: %s", safe_exception_summary(exc))
-        await message.answer(GENERATION_TIMEOUT_MESSAGE, reply_markup=try_on_result_keyboard())
+        await message.answer(GENERATION_TIMEOUT_MESSAGE, reply_markup=try_on_recovery_keyboard())
         return
     except Exception as exc:
         logger.warning("User photo try-on failed safely: %s", safe_exception_summary(exc))
-        await message.answer(GENERATION_UNAVAILABLE_MESSAGE, reply_markup=try_on_result_keyboard())
+        await message.answer(GENERATION_UNAVAILABLE_MESSAGE, reply_markup=try_on_recovery_keyboard())
         return
 
     generation_status = (result or {}).get("status")
     if generation_status == GENERATION_COMPLETED_STATUS:
         image_url = generation_result_url((result or {}).get("result_image_url"))
-        caption = f"Готово! Это AI-примерка ткани: {_fabric_summary(data)}."
+        caption = f"Готово! Это AI-примерка ткани: {_fabric_summary(data)}.\n\nЧто делаем дальше?"
         await state.set_state(TryOnPhotoStates.photo_ready)
         await answer_photo_or_text(
             message,
             image_url,
             caption if image_url else f"{caption}\n{(result or {}).get('result_image_url') or ''}".strip(),
-            reply_markup=try_on_result_keyboard(),
+            reply_markup=try_on_success_keyboard(),
         )
         return
 
     await state.set_state(TryOnPhotoStates.photo_ready)
     if generation_status in GENERATION_ACTIVE_STATUSES:
         await message.answer(
-            "Примерка запущена. Проверьте результат чуть позже.",
-            reply_markup=try_on_result_keyboard(),
+            "Примерка запущена. Проверьте результат чуть позже.\n\nЧто делаем дальше?",
+            reply_markup=try_on_success_keyboard(),
         )
         return
-    await message.answer(_failed_generation_message(result), reply_markup=try_on_result_keyboard())
+    await message.answer(_failed_generation_message(result), reply_markup=try_on_recovery_keyboard())
 
 
 @router.callback_query(
@@ -225,30 +274,29 @@ async def handle_try_on_photo(message: Message, state: FSMContext) -> None:
     await _generate_from_photo(message, state, message.photo[-1].file_id)
 
 
-@router.callback_query(lambda callback: callback.data == "try_on:upload_another")
+@router.callback_query(lambda callback: callback.data in SEND_NEW_PHOTO_CALLBACKS)
 async def upload_another_photo(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer("Жду новое фото.", show_alert=False)
-    await state.set_state(TryOnPhotoStates.waiting_for_photo)
-    if callback.message:
-        await callback.message.answer(PHOTO_SAFETY_COPY)
+    await _ask_for_new_photo_for_current_fabric(callback, state, "Отправьте новое фото для этой ткани")
 
 
-@router.callback_query(lambda callback: callback.data == "try_on:regenerate")
+@router.callback_query(lambda callback: callback.data in RETRY_SAME_FABRIC_CALLBACKS)
 async def regenerate_try_on(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.answer("Повторяю примерку…", show_alert=False)
-    data = await state.get_data()
-    file_id = data.get("last_photo_file_id")
-    if not file_id or callback.message is None:
-        await state.set_state(TryOnPhotoStates.waiting_for_photo)
-        if callback.message:
-            await callback.message.answer("Загрузите фото ещё раз.\n" + PHOTO_SAFETY_COPY)
-        return
-    await _generate_from_photo(callback.message, state, str(file_id))
+    await callback.answer("Жду новое фото для этой ткани.", show_alert=False)
+    await _ask_for_new_photo_for_current_fabric(callback, state, "Примерим эту ткань ещё раз. Отправьте новое фото")
 
 
-@router.callback_query(lambda callback: callback.data == "try_on:catalog")
+@router.callback_query(lambda callback: callback.data in CHOOSE_OTHER_FABRIC_CALLBACKS)
 async def choose_another_fabric(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer("Выберите другую ткань.", show_alert=False)
+    await state.clear()
+    if callback.message:
+        await _open_catalog_from_message(callback.message)
+
+
+@router.callback_query(lambda callback: callback.data in CATALOG_CALLBACKS)
+async def open_try_on_catalog(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer("Открываю каталог.", show_alert=False)
     await state.clear()
     if callback.message:
-        await catalog.show_catalog(callback.message)
+        await _open_catalog_from_message(callback.message)

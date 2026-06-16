@@ -332,7 +332,9 @@ curl -X POST http://localhost:8000/api/admin/fabrics \
 - Prompt формулируется как image edit / clothing-only fabric replacement: сохранить лицо, тело, позу, фон, освещение, предметы и композицию, меняя только материал видимой одежды.
 - Bot использует отдельный длинный timeout `BOT_GENERATION_TIMEOUT_SECONDS`, потому что real image generation может занимать 1–2 минуты.
 - Успешная генерация получает `status="completed"` и `result_image_url`; bot отправляет generated image пользователю.
+- После результата bot показывает действия продолжения: примерить эту же ткань ещё раз, выбрать другую ткань, отправить другое фото или вернуться в каталог. Повторная примерка и другое фото сохраняют выбранную ткань, но ждут новое фото пользователя и не запускают generation автоматически со старым изображением.
 - Ошибки провайдера, timeout, отсутствующий ключ и validation failures получают controlled messages без raw traceback/provider details, без upload bytes/base64 и без secret values.
+- При controlled failure bot показывает recovery-кнопки: выбрать другую ткань, отправить другое фото или открыть каталог. Если выбранная ткань потеряна из state или больше недоступна, bot возвращает пользователя к каталогу и не подставляет random/default/other fabric.
 - Missing/wrong `X-Bot-Token` отклоняется до создания записи. После успешной bot-auth проверки failed attempts сохраняются в `generations`, чтобы admin мог видеть failures.
 - Используйте только synthetic или явно разрешенные тестовые фото для smoke; не отправляйте документы, интимные фото или фото других людей без согласия.
 

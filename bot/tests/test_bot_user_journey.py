@@ -20,6 +20,7 @@ from app.handler_utils import (
     parse_callback_uuid,
 )
 from app.handlers import catalog, fallback, fabric_selection, selected, start, user_photo
+from app import keyboards
 from app.states import TryOnPhotoStates
 from app.redaction import REDACTED, redact_mapping, safe_exception_summary, sanitize_log_message
 
@@ -198,6 +199,31 @@ def assert_no_secret_leak(text: str) -> None:
     assert "Traceback" not in text
 
 
+def keyboard_callback_data(reply_markup) -> list[str]:
+    assert reply_markup is not None
+    return [button.callback_data for row in reply_markup.inline_keyboard for button in row]
+
+
+def assert_success_try_on_keyboard(reply_markup) -> None:
+    callbacks = keyboard_callback_data(reply_markup)
+    assert callbacks == [
+        keyboards.TRY_ON_RETRY_SAME_FABRIC_CALLBACK,
+        keyboards.TRY_ON_CHOOSE_OTHER_FABRIC_CALLBACK,
+        keyboards.TRY_ON_SEND_NEW_PHOTO_CALLBACK,
+        keyboards.TRY_ON_CATALOG_CALLBACK,
+    ]
+
+
+def assert_recovery_try_on_keyboard(reply_markup) -> None:
+    callbacks = keyboard_callback_data(reply_markup)
+    assert callbacks == [
+        keyboards.TRY_ON_CHOOSE_OTHER_FABRIC_CALLBACK,
+        keyboards.TRY_ON_SEND_NEW_PHOTO_CALLBACK,
+        keyboards.TRY_ON_CATALOG_CALLBACK,
+    ]
+    assert keyboards.TRY_ON_RETRY_SAME_FABRIC_CALLBACK not in callbacks
+
+
 def test_start_shows_welcome_even_when_backend_is_unavailable(monkeypatch) -> None:
     monkeypatch.setattr(fabric_selection, "backend_client", lambda: UnavailableClient())
     message = FakeMessage("/start")
@@ -373,6 +399,8 @@ def test_try_on_photo_success_sends_generated_result(monkeypatch) -> None:
     assert message.photos
     assert message.photos[-1][0].endswith("/uploads/generations/result.png")
     assert "AI-примерка ткани" in message.photos[-1][1]
+    assert "Что делаем дальше?" in message.photos[-1][1]
+    assert_success_try_on_keyboard(message.photos[-1][2])
 
 
 def test_try_on_photo_without_selected_fabric_does_not_call_backend(monkeypatch) -> None:
@@ -387,6 +415,7 @@ def test_try_on_photo_without_selected_fabric_does_not_call_backend(monkeypatch)
 
     assert state.cleared is True
     assert message.answers[-1][0] == user_photo.TRY_ON_NO_FABRIC_MESSAGE
+    assert_recovery_try_on_keyboard(message.answers[-1][1])
 
 
 def test_try_on_photo_failure_is_friendly_and_safe(monkeypatch) -> None:
@@ -398,6 +427,7 @@ def test_try_on_photo_failure_is_friendly_and_safe(monkeypatch) -> None:
     run(user_photo.handle_try_on_photo(message, state))
 
     assert message.answers[-1][0] == user_photo.GENERATION_FAILED_MESSAGE
+    assert_recovery_try_on_keyboard(message.answers[-1][1])
     assert_no_secret_leak(message.answers[-1][0])
 
 
@@ -410,6 +440,7 @@ def test_try_on_photo_missing_openai_key_is_friendly(monkeypatch) -> None:
     run(user_photo.handle_try_on_photo(message, state))
 
     assert message.answers[-1][0] == user_photo.GENERATION_UNAVAILABLE_MESSAGE
+    assert_recovery_try_on_keyboard(message.answers[-1][1])
     assert_no_secret_leak(message.answers[-1][0])
 
 
@@ -421,6 +452,7 @@ def test_try_on_photo_timeout_is_friendly(monkeypatch) -> None:
     run(user_photo.handle_try_on_photo(message, state))
 
     assert message.answers[-1][0] == user_photo.GENERATION_TIMEOUT_MESSAGE
+    assert_recovery_try_on_keyboard(message.answers[-1][1])
     assert_no_secret_leak(message.answers[-1][0])
 
 
@@ -432,7 +464,120 @@ def test_try_on_photo_missing_reference_image_is_friendly(monkeypatch) -> None:
     run(user_photo.handle_try_on_photo(message, state))
 
     assert message.answers[-1][0] == user_photo.TRY_ON_NO_REFERENCE_IMAGE_MESSAGE
+    assert_recovery_try_on_keyboard(message.answers[-1][1])
     assert_no_secret_leak(message.answers[-1][0])
+
+
+def test_retry_same_fabric_waits_for_new_photo_without_reusing_old_photo(monkeypatch) -> None:
+    def fail_backend_client():
+        raise AssertionError("retry action must not call backend before a new photo is sent")
+
+    monkeypatch.setattr(user_photo, "backend_client", fail_backend_client)
+    fabric_id = str(uuid4())
+    state = FakeState(
+        {
+            "fabric_id": fabric_id,
+            "fabric_name": "Шелк молочный",
+            "fabric_sku": "SILK-001",
+            "last_photo_file_id": "old-photo",
+        }
+    )
+    message = FakeMessage()
+    callback = FakeCallback(keyboards.TRY_ON_RETRY_SAME_FABRIC_CALLBACK, message)
+
+    run(user_photo.regenerate_try_on(callback, state))
+
+    assert callback.answers == [("Жду новое фото для этой ткани.", False)]
+    assert state.state == TryOnPhotoStates.waiting_for_photo
+    assert state.data["fabric_id"] == fabric_id
+    assert message.answers
+    assert "Примерим эту ткань ещё раз" in message.answers[-1][0]
+    assert "Шелк молочный (SILK-001)" in message.answers[-1][0]
+    assert "Не отправляйте документы" in message.answers[-1][0]
+
+
+def test_legacy_regenerate_waits_for_new_photo_without_reusing_old_photo(monkeypatch) -> None:
+    def fail_backend_client():
+        raise AssertionError("legacy regenerate action must not call backend with the old photo")
+
+    monkeypatch.setattr(user_photo, "backend_client", fail_backend_client)
+    state = FakeState(
+        {
+            "fabric_id": str(uuid4()),
+            "fabric_name": "Шелк молочный",
+            "fabric_sku": "SILK-001",
+            "last_photo_file_id": "old-photo",
+        }
+    )
+    message = FakeMessage()
+    callback = FakeCallback(keyboards.LEGACY_TRY_ON_REGENERATE_CALLBACK, message)
+
+    run(user_photo.regenerate_try_on(callback, state))
+
+    assert state.state == TryOnPhotoStates.waiting_for_photo
+    assert message.answers
+    assert "Отправьте новое фото" in message.answers[-1][0]
+
+
+def test_send_new_photo_preserves_selected_fabric(monkeypatch) -> None:
+    def fail_backend_client():
+        raise AssertionError("send-new-photo action must not call backend before a new photo is sent")
+
+    monkeypatch.setattr(user_photo, "backend_client", fail_backend_client)
+    fabric_id = str(uuid4())
+    state = FakeState({"fabric_id": fabric_id, "fabric_name": "Атлас", "fabric_sku": "SATIN-001"})
+    message = FakeMessage()
+    callback = FakeCallback(keyboards.TRY_ON_SEND_NEW_PHOTO_CALLBACK, message)
+
+    run(user_photo.upload_another_photo(callback, state))
+
+    assert callback.answers == [("Жду новое фото.", False)]
+    assert state.state == TryOnPhotoStates.waiting_for_photo
+    assert state.data["fabric_id"] == fabric_id
+    assert "Атлас (SATIN-001)" in message.answers[-1][0]
+    assert "Не отправляйте документы" in message.answers[-1][0]
+
+
+def test_choose_other_fabric_returns_to_catalog(monkeypatch) -> None:
+    catalog_calls = []
+
+    async def fake_show_catalog(message):
+        catalog_calls.append(message)
+        await message.answer("catalog opened")
+
+    monkeypatch.setattr(user_photo.catalog, "show_catalog", fake_show_catalog)
+    state = FakeState({"fabric_id": str(uuid4()), "fabric_name": "Шелк"})
+    message = FakeMessage()
+    callback = FakeCallback(keyboards.TRY_ON_CHOOSE_OTHER_FABRIC_CALLBACK, message)
+
+    run(user_photo.choose_another_fabric(callback, state))
+
+    assert callback.answers == [("Выберите другую ткань.", False)]
+    assert state.cleared is True
+    assert catalog_calls == [message]
+    assert message.answers[-1][0] == "catalog opened"
+
+
+def test_lost_try_on_state_returns_to_catalog_safely(monkeypatch) -> None:
+    catalog_calls = []
+
+    async def fake_show_catalog(message):
+        catalog_calls.append(message)
+        await message.answer("catalog opened")
+
+    monkeypatch.setattr(user_photo.catalog, "show_catalog", fake_show_catalog)
+    state = FakeState()
+    message = FakeMessage()
+    callback = FakeCallback(keyboards.TRY_ON_SEND_NEW_PHOTO_CALLBACK, message)
+
+    run(user_photo.upload_another_photo(callback, state))
+
+    assert callback.answers == [("Жду новое фото.", False)]
+    assert state.cleared is True
+    assert user_photo.TRY_ON_LOST_STATE_MESSAGE in message.answers[0][0]
+    assert_recovery_try_on_keyboard(message.answers[0][1])
+    assert catalog_calls == [message]
+    assert message.answers[-1][0] == "catalog opened"
 
 
 def test_api_client_sends_internal_token_and_raises_controlled_errors(monkeypatch) -> None:
