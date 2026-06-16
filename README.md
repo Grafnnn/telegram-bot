@@ -87,7 +87,7 @@ cp .env.example .env
 | `BOT_BACKEND_TIMEOUT_SECONDS`, `BOT_GENERATION_TIMEOUT_SECONDS` | bot | Обычный backend timeout и увеличенный timeout для user-photo generation upload. |
 | `OPENAI_API_KEY`, `OPENAI_MODEL` | backend AI/recommendation | Реальный key нужен для GPT-подбора; placeholder оставляет controlled fallback/error. |
 | `OPENAI_IMAGE_MODEL`, `OPENAI_IMAGE_SIZE`, `OPENAI_IMAGE_QUALITY`, `OPENAI_IMAGE_OUTPUT_FORMAT`, `OPENAI_IMAGE_TIMEOUT_SECONDS` | backend image generation | Настройки OpenAI image edit для catalog-style и user-photo try-on; defaults: `gpt-image-1`, `1024x1536`, `medium`, `png`, `120`. |
-| `USER_PHOTO_MASK_MODE`, `USER_PHOTO_MASK_MIN_COVERAGE_PERCENT`, `USER_PHOTO_MASK_MAX_COVERAGE_PERCENT`, `USER_PHOTO_MASK_DILATE_PIXELS`, `USER_PHOTO_MASK_DEBUG_SAVE` | backend user-photo try-on | Optional clothing mask pipeline. Default `off` preserves current behavior; `provided` accepts explicit PNG masks, `mock` is for tests/dev, `provider` is reserved for future segmentation. |
+| `USER_PHOTO_MASK_MODE`, `USER_PHOTO_REQUIRE_MASK_FOR_STRICT_EDIT`, `USER_PHOTO_MASK_MIN_COVERAGE_PERCENT`, `USER_PHOTO_MASK_MAX_COVERAGE_PERCENT`, `USER_PHOTO_MASK_DILATE_PIXELS`, `USER_PHOTO_MASK_DEBUG_SAVE` | backend user-photo try-on | Clothing mask pipeline. Strict clothing-only edits require a valid mask by default. `provided` accepts explicit PNG masks, `mock` is tests/dev only, `provider` is reserved and fails closed until a segmentation provider exists. |
 | `UPLOAD_DIR` | backend | Persistent uploads volume/path для fabrics, garment styles, generations, user photos и user-photo masks. |
 | `MAX_UPLOAD_BYTES` | backend upload validation | Byte limit, имеет приоритет над `MAX_UPLOAD_SIZE_MB`. |
 | `RATE_LIMIT_WINDOW_SECONDS`, `ADMIN_LOGIN_RATE_LIMIT`, `BOT_API_RATE_LIMIT`, `GENERATION_RATE_LIMIT`, `UPLOAD_RATE_LIMIT` | backend abuse guards | Ненулевые scoped limits для admin login, bot API, generation и uploads; `0` используйте только для local debugging. |
@@ -322,10 +322,12 @@ curl -X POST http://localhost:8000/api/admin/fabrics \
 
 - Пользователь выбирает опубликованную ткань в Telegram и отправляет одно безопасное фото, где видна одежда.
 - Backend вызывает `POST /api/generations/user-photo`, сохраняет user photo в `UPLOAD_DIR/user-photos`, применяет texture image выбранной ткани через OpenAI image edit и сохраняет результат в `UPLOAD_DIR/generations`.
-- Optional clothing mask pipeline выключен по умолчанию: `USER_PHOTO_MASK_MODE=off`. Без mask текущий flow сохраняется и продолжает опираться на строгий prompt.
-- В режиме `USER_PHOTO_MASK_MODE=provided` backend может принять явную PNG mask, совпадающую по размерам с user photo; прозрачная область mask считается editable clothing region. Валидная mask сохраняется в `UPLOAD_DIR/user-photo-masks` и `Generation.mask_image_url`.
+- Prompt-only user-photo edit может изменить лицо, руки, фон, предметы и композицию, поэтому он не считается production-quality clothing-only примеркой.
+- По умолчанию `USER_PHOTO_REQUIRE_MASK_FOR_STRICT_EDIT=true`: без валидной clothing mask backend возвращает controlled error до OpenAI и не запускает no-mask generation под видом точечной замены ткани.
+- `USER_PHOTO_MASK_MODE=off` является legacy/dev режимом. No-mask edit можно разрешить только явным `USER_PHOTO_REQUIRE_MASK_FOR_STRICT_EDIT=false`, понимая, что strict preservation не гарантируется.
+- В режиме `USER_PHOTO_MASK_MODE=provided` backend требует явную PNG mask, совпадающую по размерам с user photo; прозрачная область mask считается editable clothing region. Без mask режим fails closed до OpenAI. Валидная mask сохраняется в `UPLOAD_DIR/user-photo-masks` и `Generation.mask_image_url`.
 - В режиме `USER_PHOTO_MASK_MODE=mock` backend генерирует простую dev/test mask для проверки pipeline. Не используйте `mock` как production segmentation.
-- `USER_PHOTO_MASK_MODE=provider` зарезервирован для будущего segmentation provider и сейчас gracefully falls back to no-mask behavior.
+- `USER_PHOTO_MASK_MODE=provider` зарезервирован для будущего segmentation provider и сейчас возвращает controlled error `Clothing mask provider is not configured yet.` No silent fallback to no-mask is allowed.
 - Mask validation rejects missing, broken, non-PNG, non-alpha, wrong-size, empty, tiny, full-image and excessive-coverage masks without exposing absolute filesystem paths.
 - User-photo generation всегда получает явный `fabric_id` из выбора пользователя и использует только reference image этой ткани: сначала `texture`, затем `main`, иначе controlled error. Случайная или fallback-ткань не подставляется.
 - Для staging/production DB-записей с `/uploads/...` недостаточно: соответствующие файлы ткани должны реально существовать в persistent `UPLOAD_DIR`. Если texture-файл выбранной ткани отсутствует, backend пробует `main` этой же ткани; если usable reference image нет, generation fails before OpenAI by design.

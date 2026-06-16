@@ -17,6 +17,7 @@ from app.models.fabric import Fabric
 from app.models.fabric_image import FabricImage
 from app.models.generation import Generation
 from app.models.telegram_user import TelegramUser
+from app.services.mask_service import MASK_PROVIDER_NOT_CONFIGURED_MESSAGE, STRICT_MASK_REQUIRED_MESSAGE
 
 BOT_HEADERS = {"X-Bot-Token": "test_bot_internal_token"}
 WRONG_BOT_HEADERS = {"X-Bot-Token": "wrong"}
@@ -120,6 +121,12 @@ def _post_user_photo(
     )
 
 
+def _allow_legacy_no_mask_edit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("USER_PHOTO_MASK_MODE", "off")
+    monkeypatch.setenv("USER_PHOTO_REQUIRE_MASK_FOR_STRICT_EDIT", "false")
+    get_settings.cache_clear()
+
+
 def _fabric_reference_path(fabric_id: str, image_type: str) -> str:
     with SessionLocal() as db:
         image = db.scalar(
@@ -146,7 +153,44 @@ def _set_fabric_reference_url(fabric_id: str, image_type: str, image_url: str) -
         db.commit()
 
 
-def test_user_photo_generation_accepts_valid_image_with_internal_token(client: TestClient) -> None:
+def test_user_photo_generation_default_requires_mask_before_provider(client: TestClient, monkeypatch) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    provider_called = False
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_texture_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+    ) -> bytes:
+        nonlocal provider_called
+        provider_called = True
+        return PNG_1X1
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+
+    response = _post_user_photo(client, fabric_id, PNG_1X1, "image/png", BOT_HEADERS)
+
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == STRICT_MASK_REQUIRED_MESSAGE
+    assert provider_called is False
+    admin_response = client.get("/api/admin/generations?status=failed", headers=_admin_headers(client))
+    assert admin_response.status_code == 200, admin_response.text
+    [admin_generation] = admin_response.json()["items"]
+    assert admin_generation["mode"] == "user_photo"
+    assert admin_generation["fabric_id"] == fabric_id
+    assert admin_generation["user_photo_url"].startswith("/uploads/user-photos/")
+    assert admin_generation["mask_image_url"] is None
+    assert admin_generation["error_message"] == STRICT_MASK_REQUIRED_MESSAGE
+
+
+def test_user_photo_generation_legacy_no_mask_mode_can_be_enabled_explicitly(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    _allow_legacy_no_mask_edit(monkeypatch)
     fabric_id = _create_fabric()
 
     response = _post_user_photo(client, fabric_id, PNG_1X1, "image/png", BOT_HEADERS)
@@ -224,6 +268,7 @@ def test_user_photo_generation_missing_fabric_does_not_create_record(client: Tes
 def test_user_photo_generation_saves_mocked_result(client: TestClient, monkeypatch) -> None:
     from app.api.routes import generations as generation_routes
 
+    _allow_legacy_no_mask_edit(monkeypatch)
     fabric_id = _create_fabric()
 
     def fake_generate(
@@ -344,6 +389,80 @@ def test_user_photo_generation_provided_mask_mode_stores_and_sends_mask(client: 
     assert captured["mask_image_path"]
     assert Path(captured["mask_image_path"] or "").exists()
     assert "A clothing edit mask is provided" in (captured["prompt"] or "")
+    assert "strict inpainting/editing task" in (captured["prompt"] or "")
+    assert "Do not change face, eyes, glasses" in (captured["prompt"] or "")
+
+
+def test_user_photo_generation_provided_mask_mode_requires_mask_before_provider(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    provider_called = False
+    monkeypatch.setenv("USER_PHOTO_MASK_MODE", "provided")
+    get_settings.cache_clear()
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+    ) -> bytes:
+        nonlocal provider_called
+        provider_called = True
+        return PNG_1X1
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+
+    response = _post_user_photo(client, fabric_id, PNG_300, "image/png", BOT_HEADERS)
+
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == STRICT_MASK_REQUIRED_MESSAGE
+    assert provider_called is False
+    admin_response = client.get("/api/admin/generations?status=failed", headers=_admin_headers(client))
+    assert admin_response.status_code == 200, admin_response.text
+    [admin_generation] = admin_response.json()["items"]
+    assert admin_generation["fabric_id"] == fabric_id
+    assert admin_generation["mask_image_url"] is None
+    assert admin_generation["error_message"] == STRICT_MASK_REQUIRED_MESSAGE
+
+
+def test_user_photo_generation_provider_mode_does_not_fallback_to_no_mask(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    provider_called = False
+    monkeypatch.setenv("USER_PHOTO_MASK_MODE", "provider")
+    get_settings.cache_clear()
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+    ) -> bytes:
+        nonlocal provider_called
+        provider_called = True
+        return PNG_1X1
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+
+    response = _post_user_photo(client, fabric_id, PNG_300, "image/png", BOT_HEADERS)
+
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == MASK_PROVIDER_NOT_CONFIGURED_MESSAGE
+    assert provider_called is False
+    admin_response = client.get("/api/admin/generations?status=failed", headers=_admin_headers(client))
+    assert admin_response.status_code == 200, admin_response.text
+    [admin_generation] = admin_response.json()["items"]
+    assert admin_generation["fabric_id"] == fabric_id
+    assert admin_generation["mask_image_url"] is None
+    assert admin_generation["error_message"] == MASK_PROVIDER_NOT_CONFIGURED_MESSAGE
 
 
 def test_user_photo_generation_invalid_provided_mask_fails_controlled(client: TestClient, monkeypatch) -> None:
@@ -393,6 +512,7 @@ def test_user_photo_generation_invalid_provided_mask_fails_controlled(client: Te
 def test_user_photo_generation_uses_exact_requested_fabric_reference(client: TestClient, monkeypatch) -> None:
     from app.api.routes import generations as generation_routes
 
+    _allow_legacy_no_mask_edit(monkeypatch)
     fabric_a_id = _create_fabric(sku="PHOTO-A", name="Fabric A", category="linen")
     fabric_b_id = _create_fabric(sku="PHOTO-B", name="Fabric B", category="silk", color="emerald")
     expected_reference_path = _fabric_reference_path(fabric_b_id, "texture")
@@ -432,6 +552,7 @@ def test_user_photo_generation_uses_exact_requested_fabric_reference(client: Tes
 def test_user_photo_generation_prefers_texture_over_main_reference(client: TestClient, monkeypatch) -> None:
     from app.api.routes import generations as generation_routes
 
+    _allow_legacy_no_mask_edit(monkeypatch)
     fabric_id = _create_fabric(with_main=True)
     expected_reference_path = _fabric_reference_path(fabric_id, "texture")
     captured: dict[str, str] = {}
@@ -458,6 +579,7 @@ def test_user_photo_generation_prefers_texture_over_main_reference(client: TestC
 def test_user_photo_generation_falls_back_to_main_reference(client: TestClient, monkeypatch) -> None:
     from app.api.routes import generations as generation_routes
 
+    _allow_legacy_no_mask_edit(monkeypatch)
     fabric_id = _create_fabric(with_texture=False, with_main=True)
     expected_reference_path = _fabric_reference_path(fabric_id, "main")
     captured: dict[str, str] = {}
@@ -487,6 +609,7 @@ def test_user_photo_generation_falls_back_to_same_fabric_main_when_texture_file_
 ) -> None:
     from app.api.routes import generations as generation_routes
 
+    _allow_legacy_no_mask_edit(monkeypatch)
     other_fabric_id = _create_fabric(sku="PHOTO-OTHER", name="Other fabric", with_main=True)
     fabric_id = _create_fabric(sku="PHOTO-MAIN-FALLBACK", name="Main fallback fabric", with_main=True)
     _remove_fabric_reference_file(fabric_id, "texture")
@@ -527,6 +650,7 @@ def test_user_photo_generation_missing_reference_files_fail_without_provider_or_
 ) -> None:
     from app.api.routes import generations as generation_routes
 
+    _allow_legacy_no_mask_edit(monkeypatch)
     fabric_id = _create_fabric(with_main=True)
     _remove_fabric_reference_file(fabric_id, "texture")
     _remove_fabric_reference_file(fabric_id, "main")
@@ -580,6 +704,7 @@ def test_user_photo_generation_rejects_unsafe_reference_url_without_main_fallbac
 ) -> None:
     from app.api.routes import generations as generation_routes
 
+    _allow_legacy_no_mask_edit(monkeypatch)
     fabric_id = _create_fabric(with_main=True)
     _set_fabric_reference_url(fabric_id, "texture", unsafe_url)
     provider_called = False
@@ -611,6 +736,7 @@ def test_user_photo_generation_rejects_unsafe_reference_url_without_main_fallbac
 def test_user_photo_generation_provider_error_is_normalized(client: TestClient, monkeypatch) -> None:
     from app.api.routes import generations as generation_routes
 
+    _allow_legacy_no_mask_edit(monkeypatch)
     fabric_id = _create_fabric()
     log_messages: list[str] = []
 

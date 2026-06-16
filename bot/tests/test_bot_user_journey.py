@@ -187,6 +187,18 @@ class TryOnNoReferenceClient:
         )
 
 
+class TryOnMaskRequiredClient:
+    async def upsert_user(self, **kwargs):
+        return {"ok": True}
+
+    async def create_user_photo_generation(self, **kwargs):
+        raise BackendAPIError(
+            400,
+            "/generations/user-photo",
+            detail="Для точной примерки нужна маска области одежды.",
+        )
+
+
 def run(coro):
     return asyncio.run(coro)
 
@@ -196,6 +208,11 @@ def assert_no_secret_leak(text: str) -> None:
     assert "X-Bot-Token" not in text
     assert "TELEGRAM_BOT_TOKEN" not in text
     assert "Traceback" not in text
+
+
+def keyboard_callback_data(reply_markup) -> list[str]:
+    assert reply_markup is not None
+    return [button.callback_data for row in reply_markup.inline_keyboard for button in row]
 
 
 def test_start_shows_welcome_even_when_backend_is_unavailable(monkeypatch) -> None:
@@ -432,6 +449,22 @@ def test_try_on_photo_missing_reference_image_is_friendly(monkeypatch) -> None:
     run(user_photo.handle_try_on_photo(message, state))
 
     assert message.answers[-1][0] == user_photo.TRY_ON_NO_REFERENCE_IMAGE_MESSAGE
+    assert_no_secret_leak(message.answers[-1][0])
+
+
+def test_try_on_photo_mask_required_error_is_safe_and_actionable(monkeypatch) -> None:
+    monkeypatch.setattr(user_photo, "backend_client", lambda: TryOnMaskRequiredClient())
+    state = FakeState({"fabric_id": str(uuid4()), "fabric_name": "Шелк молочный", "fabric_sku": "SILK-001"})
+    message = FakeMessage(photo=[SimpleNamespace(file_id="high")])
+
+    run(user_photo.handle_try_on_photo(message, state))
+
+    assert message.answers[-1][0] == user_photo.TRY_ON_MASK_REQUIRED_MESSAGE
+    assert keyboard_callback_data(message.answers[-1][1]) == [
+        "try_on:catalog",
+        "try_on:upload_another",
+        "try_on:catalog",
+    ]
     assert_no_secret_leak(message.answers[-1][0])
 
 
