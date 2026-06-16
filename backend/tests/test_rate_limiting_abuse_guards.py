@@ -162,6 +162,9 @@ def test_user_photo_upload_rate_limit_allows_first_valid_upload_then_429(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _set_rate_limits(monkeypatch, GENERATION_RATE_LIMIT=10, UPLOAD_RATE_LIMIT=1)
+    monkeypatch.setenv("USER_PHOTO_MASK_MODE", "off")
+    monkeypatch.setenv("USER_PHOTO_REQUIRE_MASK_FOR_STRICT_EDIT", "false")
+    get_settings.cache_clear()
     fabric_id = _create_fabric()
 
     first = _post_user_photo(client, fabric_id)

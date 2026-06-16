@@ -108,6 +108,7 @@ class Settings:
     openai_image_timeout_seconds: int = 120
 
     user_photo_mask_mode: str = "off"
+    user_photo_require_mask_for_strict_edit: bool = True
     user_photo_mask_min_coverage_percent: float = 3.0
     user_photo_mask_max_coverage_percent: float = 80.0
     user_photo_mask_dilate_pixels: int = 0
@@ -163,6 +164,11 @@ class Settings:
                 "OPENAI_IMAGE_TIMEOUT_SECONDS", cls.openai_image_timeout_seconds, env_file
             ),
             "user_photo_mask_mode": _get_value("USER_PHOTO_MASK_MODE", cls.user_photo_mask_mode, env_file),
+            "user_photo_require_mask_for_strict_edit": _get_bool(
+                "USER_PHOTO_REQUIRE_MASK_FOR_STRICT_EDIT",
+                cls.user_photo_require_mask_for_strict_edit,
+                env_file,
+            ),
             "user_photo_mask_min_coverage_percent": _get_float(
                 "USER_PHOTO_MASK_MIN_COVERAGE_PERCENT",
                 cls.user_photo_mask_min_coverage_percent,

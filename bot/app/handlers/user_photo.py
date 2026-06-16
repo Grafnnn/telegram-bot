@@ -14,7 +14,7 @@ from app.config import get_settings
 from app.handler_utils import friendly_api_error_message, parse_callback_uuid
 from app.handlers import catalog
 from app.handlers.selected import answer_photo_or_text, generation_result_url
-from app.keyboards import try_on_result_keyboard
+from app.keyboards import try_on_recovery_keyboard, try_on_result_keyboard
 from app.redaction import safe_exception_summary
 from app.states import TryOnPhotoStates
 
@@ -37,6 +37,10 @@ TRY_ON_VALIDATION_MESSAGE = (
     "Не удалось заменить ткань на фото. Попробуйте другое фото: одежда должна быть хорошо видна."
 )
 TRY_ON_NO_REFERENCE_IMAGE_MESSAGE = "У выбранной ткани нет изображения для примерки. Выберите другую ткань."
+TRY_ON_MASK_REQUIRED_MESSAGE = (
+    "Я не буду перерисовывать всё фото целиком. Для точной примерки нужно выделить область одежды. "
+    "Сейчас можно выбрать другую ткань или отправить другое фото."
+)
 TRY_ON_NO_FABRIC_MESSAGE = "Сначала выберите ткань из каталога, затем отправьте фото."
 
 
@@ -54,7 +58,18 @@ def _failed_generation_message(result: dict[str, Any] | None) -> str:
     error_message = str((result or {}).get("error_message") or "").lower()
     if "openai api key" in error_message or "не настро" in error_message:
         return GENERATION_UNAVAILABLE_MESSAGE
+    if _is_mask_required_error(error_message):
+        return TRY_ON_MASK_REQUIRED_MESSAGE
     return GENERATION_FAILED_MESSAGE
+
+
+def _is_mask_required_error(detail: str) -> bool:
+    normalized = detail.lower()
+    return (
+        "маска области одежды" in normalized
+        or "clothing mask provider is not configured" in normalized
+        or "user photo mask is not valid" in normalized
+    )
 
 
 async def _download_telegram_photo(message: Message, file_id: str) -> bytes:
@@ -113,7 +128,9 @@ async def _generate_from_photo(message: Message, state: FSMContext, file_id: str
         )
     except BackendAPIError as exc:
         if exc.status in {400, 404, 422}:
-            if exc.detail and "изображения для примерки" in exc.detail:
+            if exc.detail and _is_mask_required_error(exc.detail):
+                await message.answer(TRY_ON_MASK_REQUIRED_MESSAGE, reply_markup=try_on_recovery_keyboard())
+            elif exc.detail and "изображения для примерки" in exc.detail:
                 await message.answer(TRY_ON_NO_REFERENCE_IMAGE_MESSAGE, reply_markup=try_on_result_keyboard())
             else:
                 await message.answer(TRY_ON_VALIDATION_MESSAGE, reply_markup=try_on_result_keyboard())

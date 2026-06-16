@@ -16,6 +16,8 @@ from app.services.storage_service import resolve_upload_path
 MASK_FOLDER = "user-photo-masks"
 EDITABLE_ALPHA_THRESHOLD = 128
 ALLOWED_MASK_MODES = {"off", "provided", "mock", "provider"}
+STRICT_MASK_REQUIRED_MESSAGE = "Для точной примерки нужна маска области одежды."
+MASK_PROVIDER_NOT_CONFIGURED_MESSAGE = "Clothing mask provider is not configured yet."
 
 MASK_ERROR_MESSAGES = {
     "path_traversal": "Mask path is unsafe.",
@@ -204,11 +206,16 @@ async def prepare_user_photo_mask(base_image_path: Path, provided_mask: UploadFi
     """Prepare an optional edit mask according to USER_PHOTO_MASK_MODE."""
 
     mode = _mask_mode()
-    if mode in {"off", "provider"}:
+    settings = get_settings()
+    if mode == "off":
+        if settings.user_photo_require_mask_for_strict_edit:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, STRICT_MASK_REQUIRED_MESSAGE)
         return None
+    if mode == "provider":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, MASK_PROVIDER_NOT_CONFIGURED_MESSAGE)
     if mode == "provided":
         if provided_mask is None:
-            return None
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, STRICT_MASK_REQUIRED_MESSAGE)
         if (provided_mask.content_type or "").lower() != "image/png":
             raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Mask must be a PNG image.")
         mask_bytes = await provided_mask.read()

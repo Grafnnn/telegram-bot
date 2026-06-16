@@ -37,3 +37,13 @@ def try_on_result_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🧵 Выбрать другую ткань", callback_data="try_on:catalog")],
         ]
     )
+
+
+def try_on_recovery_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🧵 Выбрать другую ткань", callback_data="try_on:catalog")],
+            [InlineKeyboardButton(text="📸 Отправить другое фото", callback_data="try_on:upload_another")],
+            [InlineKeyboardButton(text="В каталог", callback_data="try_on:catalog")],
+        ]
+    )

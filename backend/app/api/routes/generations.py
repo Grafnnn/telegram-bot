@@ -191,7 +191,11 @@ def build_user_photo_fabric_replacement_prompt(
         details.append(f"Garment style context: {garment_style.description}")
     if mask_used:
         details.append(
-            "A clothing edit mask is provided. Edit only the transparent/editable clothing region defined by the mask. "
+            "A clothing edit mask is provided. This is a strict inpainting/editing task. "
+            "Edit only the transparent/editable clothing region defined by the mask. "
+            "Preserve the original image pixel structure outside the editable clothing mask. "
+            "Do not change face, eyes, glasses, hair, skin, hands, fingers, body shape, pose, "
+            "background, furniture, objects, lighting, camera angle or composition. "
             "Preserve all non-editable regions exactly."
         )
     details.append(

@@ -21,10 +21,13 @@ IMAGE_EDIT_PROMPT = (
 )
 USER_PHOTO_EDIT_PROMPT = (
     "Edit the user photo as a realistic fashion fabric try-on. "
+    "This is a strict inpainting/editing task, not a full-scene regeneration task. "
+    "Do not regenerate the photo. "
     "Use the selected catalog fabric reference image as the only material and texture source. "
     "Apply the selected fabric only to the visible garment or clothing area while preserving "
     "the person's identity, face, pose, body shape, background, lighting and garment silhouette. "
-    "Do not change the face, hands, hair, body, camera angle, background, objects, room or accessories. "
+    "Do not change the face, eyes, glasses, hair, skin, hands, fingers, body shape, pose, "
+    "camera angle, background, furniture, objects, room, lighting, composition or accessories. "
     "Do not make the person nude. "
     "Do not add text, logos, watermarks, extra people or unrealistic artifacts. "
     "Preserve folds, seams, shadows and drape so only the clothing fabric changes."
