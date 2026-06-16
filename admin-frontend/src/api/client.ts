@@ -6,8 +6,22 @@ export type Page<T> = { items: T[]; total: number; page: number; limit: number }
 export type FabricStatus = 'draft' | 'published' | 'hidden' | 'archived';
 export type StockStatus = 'in_stock' | 'preorder' | 'out_of_stock';
 export type FabricImage = { id: string; fabric_id: string; image_url: string; image_type: 'main' | 'texture' | 'extra' | string; sort_order: number; created_at: string };
+export type FabricReadinessMissingUploadFile = {
+  image_id?: string | null;
+  image_type?: string | null;
+  image_url?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+};
+export type FabricReadiness = {
+  public_catalog_ready: boolean;
+  try_on_ready: boolean;
+  missing_required_image_types: string[];
+  missing_upload_files: FabricReadinessMissingUploadFile[];
+  warnings: string[];
+};
 export type Fabric = {
-  id: string; sku: string; name: string; category: string; composition?: string | null; color?: string | null; shade?: string | null; pattern?: string | null; texture?: string | null; density?: string | null; stretch?: string | null; opacity?: string | null; shine?: string | null; season?: string[] | null; recommended_for?: string[] | null; not_recommended_for?: string[] | null; price_per_meter?: string | number | null; currency: string; stock_status: StockStatus; stock_quantity?: string | number | null; short_description?: string | null; full_description?: string | null; description_for_gpt?: string | null; tags?: string[] | null; status: FabricStatus; images: FabricImage[]; created_at?: string; updated_at?: string;
+  id: string; sku: string; name: string; category: string; composition?: string | null; color?: string | null; shade?: string | null; pattern?: string | null; texture?: string | null; density?: string | null; stretch?: string | null; opacity?: string | null; shine?: string | null; season?: string[] | null; recommended_for?: string[] | null; not_recommended_for?: string[] | null; price_per_meter?: string | number | null; currency: string; stock_status: StockStatus; stock_quantity?: string | number | null; short_description?: string | null; full_description?: string | null; description_for_gpt?: string | null; tags?: string[] | null; status: FabricStatus; images: FabricImage[]; readiness?: FabricReadiness | null; created_at?: string; updated_at?: string;
 };
 export type GarmentStyle = { id: string; name: string; category: string; status: string; description?: string | null; compatible_fabric_categories?: string[] | null; base_image_url?: string | null; mask_image_url?: string | null; created_at?: string; updated_at?: string };
 export type GenerationFabric = { id: string; sku: string; name: string; category: string };

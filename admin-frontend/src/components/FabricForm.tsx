@@ -27,6 +27,7 @@ import {
   splitCsv,
   STOCK_STATUS_VALUES,
 } from '../utils/formValidation';
+import { readinessClassName, summarizeFabricReadiness } from '../utils/fabricReadiness';
 
 type FabricFormMode = 'create' | 'edit';
 type ImageType = 'main' | 'texture' | 'extra';
@@ -183,6 +184,7 @@ export default function FabricForm({ mode, fabric, onCreated, onUpdated }: Props
   const effectiveFabricId = fabric?.id ?? createdFabricId;
   const hasMainImage = useMemo(() => images.some((image) => image.image_type === 'main') || selectedFiles.main.length > 0, [images, selectedFiles.main.length]);
   const hasTextureImage = useMemo(() => images.some((image) => image.image_type === 'texture') || selectedFiles.texture.length > 0, [images, selectedFiles.texture.length]);
+  const readiness = useMemo(() => summarizeFabricReadiness(fabric?.readiness), [fabric?.readiness]);
   const disabled = loadingAction !== null;
 
   function updateField<K extends keyof FormState>(field: K, value: FormState[K]) {
@@ -364,7 +366,14 @@ export default function FabricForm({ mode, fabric, onCreated, onUpdated }: Props
 
   return (
     <form className="space-y-6" onSubmit={runSave}>
-      {fabric && <div className="flex items-center gap-3 rounded-xl bg-white p-4 shadow-sm"><span className="text-sm text-slate-500">Текущий статус:</span><StatusBadge status={fabric.status} /></div>}
+      {fabric && (
+        <div className="flex flex-wrap items-start gap-3 rounded-xl bg-white p-4 shadow-sm">
+          <span className="text-sm text-slate-500">Текущий статус:</span>
+          <StatusBadge status={fabric.status} />
+          <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${readinessClassName(readiness.tone)}`}>{readiness.label}</span>
+          <p className="basis-full text-sm text-slate-500">{readiness.detail}</p>
+        </div>
+      )}
       {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-700">{error}</div>}
       {success && <div className="rounded-xl border border-green-200 bg-green-50 p-4 text-green-700">{success}</div>}
 

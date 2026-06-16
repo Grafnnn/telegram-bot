@@ -1,5 +1,6 @@
 """Public catalog routes for the Telegram bot."""
 
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -22,15 +23,45 @@ from app.schemas.common import PaginatedResponse
 from app.schemas.fabric import FabricRead, FabricRecommendRequest, FabricRecommendResponse
 from app.schemas.garment_style import GarmentStyleRead
 from app.services.fabric_recommendation_service import build_fabric_recommendations
+from app.services.image_readiness_service import fabric_image_readiness_report
 from app.services.openai_service import extract_fabric_preferences
 from app.utils.pagination import paginate
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
+logger = logging.getLogger(__name__)
+
+
+def _public_catalog_ready_fabrics(fabrics: list[Fabric]) -> list[Fabric]:
+    ready_fabrics = []
+    for fabric in fabrics:
+        readiness = fabric_image_readiness_report(fabric)
+        if readiness.public_catalog_ready:
+            ready_fabrics.append(fabric)
+            continue
+        missing_types = sorted(set(readiness.missing_required_image_types))
+        missing_files = sorted({item.image_type or "image" for item in readiness.missing_upload_files})
+        logger.warning(
+            "Skipping public fabric with missing required upload image fabric_id=%s sku=%s missing_types=%s missing_files=%s",
+            fabric.id,
+            fabric.sku,
+            ",".join(missing_types) or "-",
+            ",".join(missing_files) or "-",
+        )
+    return ready_fabrics
+
+
+def _public_catalog_page(fabrics: list[Fabric], page: int, limit: int) -> tuple[list[Fabric], int]:
+    ready_fabrics = _public_catalog_ready_fabrics(fabrics)
+    start = (page - 1) * limit
+    end = start + limit
+    return ready_fabrics[start:end], len(ready_fabrics)
 
 
 def _published_fabric_or_404(db: Session, fabric_id: UUID) -> Fabric:
     fabric = db.scalar(select(Fabric).options(selectinload(Fabric.images)).where(Fabric.id == fabric_id, Fabric.status == "published"))
     if fabric is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ткань не найдена")
+    if not _public_catalog_ready_fabrics([fabric]):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Ткань не найдена")
     return fabric
 
@@ -44,7 +75,7 @@ def recommend_fabrics(payload: FabricRecommendRequest, db: Session = Depends(get
         .order_by(Fabric.created_at.desc())
         .limit(max(payload.limit * 10, 50))
     )
-    candidates = list(db.scalars(stmt).unique())
+    candidates = _public_catalog_ready_fabrics(list(db.scalars(stmt).unique()))
     preferred_stock_candidates = [fabric for fabric in candidates if fabric.stock_status in {"in_stock", "preorder"}]
     recommendation_candidates = preferred_stock_candidates or candidates
     preferences_result = extract_fabric_preferences(payload.user_text)
@@ -96,7 +127,8 @@ def list_public_fabrics(
         stmt = stmt.where(Fabric.price_per_meter >= min_price)
     if max_price is not None:
         stmt = stmt.where(Fabric.price_per_meter <= max_price)
-    items, total = paginate(db, stmt, page, limit)
+    candidates = list(db.scalars(stmt).unique())
+    items, total = _public_catalog_page(candidates, page, limit)
     return {"items": items, "total": total, "page": page, "limit": limit}
 
 

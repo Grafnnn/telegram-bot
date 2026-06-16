@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { resolveImageUrl } from '../api/client';
 import { archiveFabric, deleteFabric, Fabric, FabricFilters, getFabrics, hideFabric, publishFabric } from '../api/fabrics';
 import StatusBadge from '../components/StatusBadge';
+import { readinessClassName, summarizeFabricReadiness } from '../utils/fabricReadiness';
 
 const STOCK_LABELS: Record<string, string> = {
   in_stock: 'В наличии',
@@ -116,7 +117,7 @@ export default function FabricsListPage({ navigate }: { navigate: (path: string)
 
       {!loading && items.length > 0 && (
         <div className="overflow-x-auto rounded-xl bg-white shadow-sm">
-          <table className="w-full min-w-[980px] text-left text-sm">
+          <table className="w-full min-w-[1120px] text-left text-sm">
             <thead className="bg-slate-50 text-slate-600">
               <tr>
                 <th className="p-3">Фото</th>
@@ -127,6 +128,7 @@ export default function FabricsListPage({ navigate }: { navigate: (path: string)
                 <th className="p-3">Цена</th>
                 <th className="p-3">Наличие</th>
                 <th className="p-3">Статус</th>
+                <th className="p-3">Готовность</th>
                 <th className="p-3">Действия</th>
               </tr>
             </thead>
@@ -134,6 +136,7 @@ export default function FabricsListPage({ navigate }: { navigate: (path: string)
               {items.map((fabric) => {
                 const mainImage = fabric.images?.find((image) => image.image_type === 'main');
                 const busy = actionId?.endsWith(fabric.id);
+                const readiness = summarizeFabricReadiness(fabric.readiness);
                 return (
                   <tr key={fabric.id} className="border-t align-top">
                     <td className="p-3">{mainImage ? <img src={resolveImageUrl(mainImage.image_url)} alt={fabric.name} className="h-16 w-16 rounded object-cover" /> : <div className="grid h-16 w-16 place-items-center rounded bg-slate-100 text-xs text-slate-400">Нет фото</div>}</td>
@@ -144,6 +147,10 @@ export default function FabricsListPage({ navigate }: { navigate: (path: string)
                     <td className="p-3">{fabric.price_per_meter ?? '—'} {fabric.currency}</td>
                     <td className="p-3">{STOCK_LABELS[fabric.stock_status] ?? fabric.stock_status}</td>
                     <td className="p-3"><StatusBadge status={fabric.status} /></td>
+                    <td className="p-3">
+                      <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${readinessClassName(readiness.tone)}`}>{readiness.label}</span>
+                      <p className="mt-1 max-w-[220px] text-xs text-slate-500">{readiness.detail}</p>
+                    </td>
                     <td className="p-3">
                       <div className="flex flex-wrap gap-1">
                         <button type="button" className="border bg-white" onClick={() => navigate(`/fabrics/${fabric.id}`)}>Редактировать</button>

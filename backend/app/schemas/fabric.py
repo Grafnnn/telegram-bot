@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.common import ORMModel
 
@@ -35,13 +35,34 @@ class FabricImageFileReadiness(BaseModel):
     error_message: str | None = None
 
 
+class FabricMissingUploadFile(BaseModel):
+    image_id: str | None = None
+    image_type: str | None = None
+    image_url: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class FabricReadinessDiagnostics(BaseModel):
+    public_catalog_ready: bool
+    try_on_ready: bool
+    missing_required_image_types: list[str] = Field(default_factory=list)
+    missing_upload_files: list[FabricMissingUploadFile] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class FabricImageReadinessReport(BaseModel):
     has_main_image_record: bool
     has_texture_image_record: bool
     main_file_ready: bool
     texture_file_ready: bool
+    public_catalog_ready: bool
     ai_reference_ready: bool
+    try_on_ready: bool
     preferred_reference_type: str | None = None
+    missing_required_image_types: list[str] = Field(default_factory=list)
+    missing_upload_files: list[FabricMissingUploadFile] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
     readiness_errors: list[str] = Field(default_factory=list)
     images: list[FabricImageFileReadiness] = Field(default_factory=list)
 
@@ -146,8 +167,19 @@ class FabricRead(ORMModel):
     tags: list[str] | None = None
     status: str
     images: list[FabricImageRead] = Field(default_factory=list)
+    readiness: FabricReadinessDiagnostics | None = None
     created_at: datetime
     updated_at: datetime
+
+    @model_validator(mode="after")
+    def attach_readiness_diagnostics(self):
+        if self.readiness is None:
+            from app.services.image_readiness_service import fabric_image_readiness_report_from_images
+
+            self.readiness = FabricReadinessDiagnostics.model_validate(
+                fabric_image_readiness_report_from_images(self.images).to_diagnostics_dict()
+            )
+        return self
 
 
 class FabricAIRequest(BaseModel):

@@ -160,3 +160,24 @@ After importing approved rows to staging:
 4. Run the existing card check in the admin UI.
 5. Publish only reviewed complete cards.
 6. Verify public catalog and bot catalog/search after publication.
+
+## Published Fabric Image Readiness
+
+Published fabrics must have both required image records with readable backing
+files in the configured upload storage:
+
+- `main`
+- `texture`
+
+The public catalog excludes published records whose required image files are
+missing, unreadable, or unsupported. This prevents users from selecting catalog
+items that would fail try-on before the provider call because the reference
+image file is gone.
+
+The admin API and UI expose readiness diagnostics for every fabric so operators
+can repair broken records. Publishing is blocked when required image records or
+their backing files are missing, but `draft`, `hidden`, and `archived` states
+remain available so operators can safely hide or fix inconsistent staging data.
+
+Do not create or repair fabric image records with direct database writes. Upload
+images through the admin UI/API so the file and image record stay consistent.

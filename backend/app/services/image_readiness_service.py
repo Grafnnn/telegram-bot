@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from fastapi import HTTPException, status
 from PIL import Image, UnidentifiedImageError
@@ -15,6 +15,7 @@ from app.services.storage_service import ALLOWED_EXTENSIONS, ALLOWED_IMAGE_MIME_
 MIN_AI_REFERENCE_DIMENSION = 256
 AI_COMPATIBLE_IMAGE_MODES = {"RGB", "RGBA", "L", "LA", "P", "CMYK"}
 FATAL_REFERENCE_URL_ERRORS = {"unsupported_prefix", "path_traversal"}
+PUBLIC_CATALOG_REQUIRED_IMAGE_TYPES = ("main", "texture")
 
 ERROR_MESSAGES = {
     "empty_image_url": "Image URL is empty.",
@@ -70,13 +71,54 @@ class ImageFileReadiness:
 
 
 @dataclass
+class MissingUploadFile:
+    image_id: str | None
+    image_type: str | None
+    image_url: str | None
+    error_code: str | None = None
+    error_message: str | None = None
+
+    def to_public_dict(self) -> dict[str, Any]:
+        return {
+            "image_id": self.image_id,
+            "image_type": self.image_type,
+            "image_url": self.image_url,
+            "error_code": self.error_code,
+            "error_message": self.error_message,
+        }
+
+
+@dataclass
+class FabricReadinessDiagnostics:
+    public_catalog_ready: bool
+    try_on_ready: bool
+    missing_required_image_types: list[str] = field(default_factory=list)
+    missing_upload_files: list[MissingUploadFile] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+    def to_public_dict(self) -> dict[str, Any]:
+        return {
+            "public_catalog_ready": self.public_catalog_ready,
+            "try_on_ready": self.try_on_ready,
+            "missing_required_image_types": self.missing_required_image_types,
+            "missing_upload_files": [item.to_public_dict() for item in self.missing_upload_files],
+            "warnings": self.warnings,
+        }
+
+
+@dataclass
 class FabricImageReadinessReport:
     has_main_image_record: bool
     has_texture_image_record: bool
     main_file_ready: bool
     texture_file_ready: bool
+    public_catalog_ready: bool
     ai_reference_ready: bool
+    try_on_ready: bool
     preferred_reference_type: str | None
+    missing_required_image_types: list[str] = field(default_factory=list)
+    missing_upload_files: list[MissingUploadFile] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     readiness_errors: list[str] = field(default_factory=list)
     images: list[ImageFileReadiness] = field(default_factory=list)
 
@@ -86,11 +128,28 @@ class FabricImageReadinessReport:
             "has_texture_image_record": self.has_texture_image_record,
             "main_file_ready": self.main_file_ready,
             "texture_file_ready": self.texture_file_ready,
+            "public_catalog_ready": self.public_catalog_ready,
             "ai_reference_ready": self.ai_reference_ready,
+            "try_on_ready": self.try_on_ready,
             "preferred_reference_type": self.preferred_reference_type,
+            "missing_required_image_types": self.missing_required_image_types,
+            "missing_upload_files": [item.to_public_dict() for item in self.missing_upload_files],
+            "warnings": self.warnings,
             "readiness_errors": self.readiness_errors,
             "images": [image.to_public_dict() for image in self.images],
         }
+
+    def to_diagnostics(self) -> FabricReadinessDiagnostics:
+        return FabricReadinessDiagnostics(
+            public_catalog_ready=self.public_catalog_ready,
+            try_on_ready=self.try_on_ready,
+            missing_required_image_types=self.missing_required_image_types,
+            missing_upload_files=self.missing_upload_files,
+            warnings=self.warnings,
+        )
+
+    def to_diagnostics_dict(self) -> dict[str, Any]:
+        return self.to_diagnostics().to_public_dict()
 
 
 def _image_sort_key(image: FabricImage) -> tuple[int, str]:
@@ -160,10 +219,10 @@ def _readiness_error_label(readiness: ImageFileReadiness) -> str:
     return f"{image_type}:{code}"
 
 
-def fabric_image_readiness_report(fabric: Fabric) -> FabricImageReadinessReport:
-    """Summarize file and AI reference readiness for one fabric."""
+def fabric_image_readiness_report_from_images(images_source: Iterable[FabricImage]) -> FabricImageReadinessReport:
+    """Summarize file and AI reference readiness for fabric image records."""
 
-    images = [check_uploaded_image_readiness(image.image_url, image=image) for image in sorted(fabric.images, key=_image_sort_key)]
+    images = [check_uploaded_image_readiness(image.image_url, image=image) for image in sorted(images_source, key=_image_sort_key)]
     main_images = [image for image in images if image.image_type == "main"]
     texture_images = [image for image in images if image.image_type == "texture"]
     preferred_reference_type = None
@@ -171,16 +230,76 @@ def fabric_image_readiness_report(fabric: Fabric) -> FabricImageReadinessReport:
         preferred_reference_type = "texture"
     elif any(image.ai_reference_ready for image in main_images):
         preferred_reference_type = "main"
+    has_required_image_record = {
+        "main": bool(main_images),
+        "texture": bool(texture_images),
+    }
+    required_file_ready = {
+        "main": any(image.file_ready for image in main_images),
+        "texture": any(image.file_ready for image in texture_images),
+    }
+    missing_required_image_types = [
+        image_type
+        for image_type in PUBLIC_CATALOG_REQUIRED_IMAGE_TYPES
+        if not has_required_image_record[image_type]
+    ]
+    missing_upload_files = [
+        MissingUploadFile(
+            image_id=image.image_id,
+            image_type=image.image_type,
+            image_url=image.image_url,
+            error_code=image.error_code,
+            error_message=image.error_message,
+        )
+        for image in images
+        if image.image_type in PUBLIC_CATALOG_REQUIRED_IMAGE_TYPES and not image.file_ready
+    ]
+    warnings = []
+    if missing_required_image_types:
+        warnings.append("Missing required image record: " + ", ".join(missing_required_image_types))
+    if missing_upload_files:
+        warnings.append(
+            "Missing or unreadable required upload file: "
+            + ", ".join(str(item.image_type or "image") for item in missing_upload_files)
+        )
+    public_catalog_ready = (
+        not missing_required_image_types
+        and not missing_upload_files
+        and all(required_file_ready[image_type] for image_type in PUBLIC_CATALOG_REQUIRED_IMAGE_TYPES)
+    )
     return FabricImageReadinessReport(
         has_main_image_record=bool(main_images),
         has_texture_image_record=bool(texture_images),
-        main_file_ready=any(image.file_ready for image in main_images),
-        texture_file_ready=any(image.file_ready for image in texture_images),
+        main_file_ready=required_file_ready["main"],
+        texture_file_ready=required_file_ready["texture"],
+        public_catalog_ready=public_catalog_ready,
         ai_reference_ready=preferred_reference_type is not None,
+        try_on_ready=preferred_reference_type is not None,
         preferred_reference_type=preferred_reference_type,
+        missing_required_image_types=missing_required_image_types,
+        missing_upload_files=missing_upload_files,
+        warnings=warnings,
         readiness_errors=[_readiness_error_label(image) for image in images if not image.ai_reference_ready],
         images=images,
     )
+
+
+def fabric_image_readiness_report(fabric: Fabric) -> FabricImageReadinessReport:
+    """Summarize file and AI reference readiness for one fabric."""
+
+    return fabric_image_readiness_report_from_images(fabric.images)
+
+
+def fabric_readiness_diagnostics(fabric: Fabric) -> FabricReadinessDiagnostics:
+    """Return compact sanitized readiness diagnostics for API responses."""
+
+    return fabric_image_readiness_report(fabric).to_diagnostics()
+
+
+def is_public_catalog_ready(fabric: Fabric) -> bool:
+    """Return whether a fabric is safe to expose in the public catalog."""
+
+    return fabric_image_readiness_report(fabric).public_catalog_ready
 
 
 def _candidate_images(fabric: Fabric, image_type: str) -> list[FabricImage]:
