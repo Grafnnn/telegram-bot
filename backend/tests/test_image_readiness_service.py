@@ -124,8 +124,29 @@ def test_fabric_report_prefers_ready_texture_over_ready_main(upload_root: Path) 
     assert report.has_texture_image_record is True
     assert report.main_file_ready is True
     assert report.texture_file_ready is True
+    assert report.public_catalog_ready is True
     assert report.ai_reference_ready is True
+    assert report.try_on_ready is True
     assert report.preferred_reference_type == "texture"
+
+
+def test_fabric_report_requires_main_and_texture_files_for_public_catalog(upload_root: Path) -> None:
+    main_url = "/uploads/fabrics/main-public.png"
+    texture_url = "/uploads/fabrics/missing-texture.png"
+    _write_png(upload_root, main_url)
+    report = fabric_image_readiness_report(_fabric([_image(main_url, "main"), _image(texture_url, "texture")]))
+
+    assert report.has_main_image_record is True
+    assert report.has_texture_image_record is True
+    assert report.main_file_ready is True
+    assert report.texture_file_ready is False
+    assert report.public_catalog_ready is False
+    assert report.missing_required_image_types == []
+    assert len(report.missing_upload_files) == 1
+    assert report.missing_upload_files[0].image_type == "texture"
+    assert report.missing_upload_files[0].error_code == "missing_file"
+    public_payload = report.to_public_dict()
+    assert str(upload_root) not in str(public_payload)
 
 
 def test_broken_texture_falls_back_to_ready_same_fabric_main(upload_root: Path) -> None:

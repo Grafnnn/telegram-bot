@@ -6,8 +6,9 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+from app.config import get_settings
 from app.database import SessionLocal
-from app.models import Admin, Fabric
+from app.models import Admin, Fabric, FabricImage
 from app.models.garment_style import GarmentStyle
 from app.utils.security import hash_password
 from tests.test_fabric_admin_workflow import PNG_1X1
@@ -58,6 +59,15 @@ def _style_payload(**overrides) -> dict:
     }
     payload.update(overrides)
     return payload
+
+
+def _add_ready_fabric_images(db, fabric: Fabric) -> None:
+    for sort_order, image_type in enumerate(["main", "texture"]):
+        image_url = f"/uploads/fabrics/{fabric.id}-{image_type}.png"
+        image_path = get_settings().upload_dir / image_url.removeprefix("/uploads/")
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        image_path.write_bytes(PNG_1X1)
+        db.add(FabricImage(fabric_id=fabric.id, image_url=image_url, image_type=image_type, sort_order=sort_order))
 
 
 def test_admin_fabric_crud_auth_validation_conflicts_and_not_found(client: TestClient) -> None:
@@ -226,6 +236,8 @@ def test_public_catalog_stays_public_and_does_not_expose_sensitive_fields(client
             status="published",
         )
         db.add_all([fabric, style])
+        db.flush()
+        _add_ready_fabric_images(db, fabric)
         db.commit()
         db.refresh(fabric)
         db.refresh(style)
