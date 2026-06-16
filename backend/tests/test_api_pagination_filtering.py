@@ -6,9 +6,11 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+from app.config import get_settings
 from app.database import SessionLocal
-from app.models import Fabric, Generation
+from app.models import Fabric, FabricImage, Generation
 from app.models.garment_style import GarmentStyle
+from tests.test_fabric_admin_workflow import PNG_1X1
 
 SENSITIVE_FIELD_NAMES = {"password_hash", "JWT_SECRET", "BOT_INTERNAL_TOKEN", "INITIAL_ADMIN_PASSWORD", "OPENAI_API_KEY"}
 
@@ -31,6 +33,15 @@ def _assert_page_shape(payload: dict, *, page: int = 1, limit: int = 20) -> None
     assert payload["limit"] == limit
 
 
+def _add_ready_fabric_images(db, fabric: Fabric) -> None:
+    for sort_order, image_type in enumerate(["main", "texture"]):
+        image_url = f"/uploads/fabrics/{fabric.id}-{image_type}.png"
+        image_path = get_settings().upload_dir / image_url.removeprefix("/uploads/")
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        image_path.write_bytes(PNG_1X1)
+        db.add(FabricImage(fabric_id=fabric.id, image_url=image_url, image_type=image_type, sort_order=sort_order))
+
+
 def _seed_catalog_rows() -> tuple[str, str]:
     with SessionLocal() as db:
         fabric = Fabric(
@@ -51,6 +62,8 @@ def _seed_catalog_rows() -> tuple[str, str]:
         )
         generation = Generation(mode="catalog_style", status="failed", error_message="safe failure")
         db.add_all([fabric, style, generation])
+        db.flush()
+        _add_ready_fabric_images(db, fabric)
         db.commit()
         db.refresh(fabric)
         db.refresh(style)
