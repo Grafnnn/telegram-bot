@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from io import BytesIO
+
 import pytest
 from PIL import Image, ImageDraw
 
-from app.services.preservation_service import calculate_outside_mask_drift
+from app.services.preservation_service import (
+    PreservationThresholds,
+    calculate_outside_mask_drift,
+    evaluate_generated_image_preservation,
+)
 
 
 def _synthetic_photo() -> Image.Image:
@@ -22,6 +28,12 @@ def _shirt_mask() -> Image.Image:
     draw = ImageDraw.Draw(mask)
     draw.rectangle((22, 20, 42, 44), fill=(0, 0, 0, 0))
     return mask
+
+
+def _png_bytes(image: Image.Image) -> bytes:
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def test_outside_mask_drift_ignores_editable_clothing_region() -> None:
@@ -73,3 +85,108 @@ def test_outside_mask_drift_requires_matching_dimensions() -> None:
             Image.new("RGB", (32, 32)),
             _shirt_mask(),
         )
+
+
+def test_generated_image_preservation_passes_when_only_editable_region_changes(tmp_path) -> None:
+    base = _synthetic_photo()
+    mask = _shirt_mask()
+    candidate = base.copy()
+    ImageDraw.Draw(candidate).rectangle((22, 20, 42, 44), fill=(160, 30, 180), outline=(160, 30, 180))
+    base_path = tmp_path / "base.png"
+    mask_path = tmp_path / "mask.png"
+    base.save(base_path, format="PNG")
+    mask.save(mask_path, format="PNG")
+
+    result = evaluate_generated_image_preservation(
+        source_image_path=base_path,
+        candidate_image_bytes=_png_bytes(candidate),
+        mask_image_path=mask_path,
+        thresholds=PreservationThresholds(max_mean_delta=0, max_changed_pixel_percent=0, pixel_delta_threshold=8),
+    )
+
+    assert result.passes is True
+    assert result.reason is None
+    assert result.drift is not None
+    assert result.drift.mean_delta == 0
+    assert result.drift.changed_pixel_percent == 0
+
+
+def test_generated_image_preservation_fails_when_protected_region_changes(tmp_path) -> None:
+    base = _synthetic_photo()
+    mask = _shirt_mask()
+    candidate = base.copy()
+    ImageDraw.Draw(candidate).rectangle((0, 0, 63, 12), fill=(15, 15, 15))
+    base_path = tmp_path / "base.png"
+    mask_path = tmp_path / "mask.png"
+    base.save(base_path, format="PNG")
+    mask.save(mask_path, format="PNG")
+
+    result = evaluate_generated_image_preservation(
+        source_image_path=base_path,
+        candidate_image_bytes=_png_bytes(candidate),
+        mask_image_path=mask_path,
+        thresholds=PreservationThresholds(max_mean_delta=1, max_changed_pixel_percent=1, pixel_delta_threshold=8),
+    )
+
+    assert result.passes is False
+    assert result.reason == "protected_region_drift"
+    assert result.drift is not None
+    assert result.drift.mean_delta > 1
+    assert result.drift.changed_pixel_percent > 1
+
+
+def test_generated_image_preservation_fails_size_mismatch(tmp_path) -> None:
+    base_path = tmp_path / "base.png"
+    mask_path = tmp_path / "mask.png"
+    _synthetic_photo().save(base_path, format="PNG")
+    _shirt_mask().save(mask_path, format="PNG")
+
+    result = evaluate_generated_image_preservation(
+        source_image_path=base_path,
+        candidate_image_bytes=_png_bytes(Image.new("RGB", (32, 32), color=(255, 0, 0))),
+        mask_image_path=mask_path,
+    )
+
+    assert result.passes is False
+    assert result.reason == "size_mismatch"
+    assert result.drift is None
+
+
+def test_generated_image_preservation_fails_empty_editable_region(tmp_path) -> None:
+    base = _synthetic_photo()
+    mask = Image.new("RGBA", (64, 64), (0, 0, 0, 255))
+    base_path = tmp_path / "base.png"
+    mask_path = tmp_path / "mask.png"
+    base.save(base_path, format="PNG")
+    mask.save(mask_path, format="PNG")
+
+    result = evaluate_generated_image_preservation(
+        source_image_path=base_path,
+        candidate_image_bytes=_png_bytes(base),
+        mask_image_path=mask_path,
+    )
+
+    assert result.passes is False
+    assert result.reason == "empty_editable_mask_region"
+
+
+def test_generated_image_preservation_threshold_equality_passes(tmp_path) -> None:
+    base = _synthetic_photo()
+    mask = _shirt_mask()
+    candidate = Image.eval(base, lambda value: min(255, value + 1))
+    base_path = tmp_path / "base.png"
+    mask_path = tmp_path / "mask.png"
+    base.save(base_path, format="PNG")
+    mask.save(mask_path, format="PNG")
+
+    result = evaluate_generated_image_preservation(
+        source_image_path=base_path,
+        candidate_image_bytes=_png_bytes(candidate),
+        mask_image_path=mask_path,
+        thresholds=PreservationThresholds(max_mean_delta=1, max_changed_pixel_percent=0, pixel_delta_threshold=8),
+    )
+
+    assert result.passes is True
+    assert result.drift is not None
+    assert result.drift.mean_delta == pytest.approx(1)
+    assert result.drift.changed_pixel_percent == 0

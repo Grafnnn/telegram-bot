@@ -113,6 +113,10 @@ class Settings:
     user_photo_mask_max_coverage_percent: float = 80.0
     user_photo_mask_dilate_pixels: int = 0
     user_photo_mask_debug_save: bool = False
+    user_photo_preservation_check_enabled: bool = True
+    user_photo_preservation_max_mean_delta: float = 1.0
+    user_photo_preservation_max_changed_pixel_percent: float = 1.0
+    user_photo_preservation_pixel_delta_threshold: int = 8
 
     upload_dir: Path = Path("/app/uploads")
     max_upload_size_mb: int = 10
@@ -184,6 +188,26 @@ class Settings:
             ),
             "user_photo_mask_debug_save": _get_bool(
                 "USER_PHOTO_MASK_DEBUG_SAVE", cls.user_photo_mask_debug_save, env_file
+            ),
+            "user_photo_preservation_check_enabled": _get_bool(
+                "USER_PHOTO_PRESERVATION_CHECK_ENABLED",
+                cls.user_photo_preservation_check_enabled,
+                env_file,
+            ),
+            "user_photo_preservation_max_mean_delta": _get_float(
+                "USER_PHOTO_PRESERVATION_MAX_MEAN_DELTA",
+                cls.user_photo_preservation_max_mean_delta,
+                env_file,
+            ),
+            "user_photo_preservation_max_changed_pixel_percent": _get_float(
+                "USER_PHOTO_PRESERVATION_MAX_CHANGED_PIXEL_PERCENT",
+                cls.user_photo_preservation_max_changed_pixel_percent,
+                env_file,
+            ),
+            "user_photo_preservation_pixel_delta_threshold": _get_int(
+                "USER_PHOTO_PRESERVATION_PIXEL_DELTA_THRESHOLD",
+                cls.user_photo_preservation_pixel_delta_threshold,
+                env_file,
             ),
             "upload_dir": Path(_get_value("UPLOAD_DIR", str(cls.upload_dir), env_file)),
             "max_upload_size_mb": _get_int("MAX_UPLOAD_SIZE_MB", cls.max_upload_size_mb, env_file),

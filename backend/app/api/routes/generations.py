@@ -25,6 +25,11 @@ from app.services import image_generation_service
 from app.services.image_generation_service import IMAGE_ERROR, IMAGE_EDIT_PROMPT, USER_PHOTO_EDIT_PROMPT
 from app.services.image_readiness_service import select_ready_fabric_reference_path
 from app.services.mask_service import prepare_user_photo_mask
+from app.services.preservation_service import (
+    PreservationThresholds,
+    UserPhotoPreservationError,
+    evaluate_generated_image_preservation,
+)
 from app.services.storage_service import resolve_upload_path, save_generated_image, save_upload
 from app.utils.redaction import safe_exception_summary, sanitize_log_message
 
@@ -212,6 +217,8 @@ def _build_user_photo_prompt(fabric: Fabric, *, mask_used: bool = False) -> str:
 def _safe_generation_error(exc: Exception) -> str:
     if isinstance(exc, MissingOpenAIKeyError):
         return str(exc)
+    if isinstance(exc, UserPhotoPreservationError):
+        return str(exc)
     if isinstance(exc, HTTPException):
         detail = exc.detail if isinstance(exc.detail, str) else "Ошибка генерации скрыта из интерфейса."
         return sanitize_log_message(detail)
@@ -247,6 +254,47 @@ def _mark_generation_completed(generation: Generation, image_bytes: bytes) -> No
 def _mark_generation_failed(generation: Generation, exc: Exception) -> None:
     generation.status = GENERATION_STATUS_FAILED
     generation.error_message = _safe_generation_error(exc)
+
+
+def _preservation_thresholds_from_settings() -> PreservationThresholds:
+    settings = get_settings()
+    return PreservationThresholds(
+        max_mean_delta=settings.user_photo_preservation_max_mean_delta,
+        max_changed_pixel_percent=settings.user_photo_preservation_max_changed_pixel_percent,
+        pixel_delta_threshold=settings.user_photo_preservation_pixel_delta_threshold,
+    )
+
+
+def _ensure_user_photo_preservation_safe(
+    *,
+    source_image_path: Path,
+    candidate_image_bytes: bytes,
+    mask_image_path: Path,
+) -> None:
+    """Fail closed when a masked provider output changes protected regions."""
+
+    settings = get_settings()
+    if not settings.user_photo_preservation_check_enabled:
+        return
+
+    result = evaluate_generated_image_preservation(
+        source_image_path=source_image_path,
+        candidate_image_bytes=candidate_image_bytes,
+        mask_image_path=mask_image_path,
+        thresholds=_preservation_thresholds_from_settings(),
+    )
+    if result.passes:
+        return
+
+    drift = result.drift
+    logger.warning(
+        "User photo preservation guardrail failed reason=%s mean_delta=%s changed_pixel_percent=%s max_delta=%s",
+        result.reason,
+        f"{drift.mean_delta:.4f}" if drift else "n/a",
+        f"{drift.changed_pixel_percent:.4f}" if drift else "n/a",
+        drift.max_delta if drift else "n/a",
+    )
+    raise UserPhotoPreservationError(result)
 
 
 @router.post(
@@ -367,6 +415,12 @@ async def _create_user_photo_generation(
             prompt,
             mask_image_path=str(mask_result.mask_path) if mask_result else None,
         )
+        if mask_result is not None:
+            _ensure_user_photo_preservation_safe(
+                source_image_path=photo_path,
+                candidate_image_bytes=image_bytes,
+                mask_image_path=mask_result.mask_path,
+            )
         _mark_generation_completed(generation, image_bytes)
     except HTTPException as exc:
         _mark_generation_failed(generation, exc)
