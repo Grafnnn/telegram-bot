@@ -280,6 +280,11 @@ preservation behavior, but it does not close the gate by itself. Issue #45 still
 needs an operator closeout confirming staging target, logs, and no
 secret/base64/raw-path leakage.
 
+For recurring pre-merge or post-deploy usage, follow
+[`docs/route_preservation_smoke_workflow.md`](route_preservation_smoke_workflow.md).
+That runbook defines when to run the route-level smoke, local/staging preflight,
+expected app-level mutations, pass/fail criteria, and log review requirements.
+
 ## Safety Boundaries
 
 This workflow must stay developer/tooling-only until a separate product decision
