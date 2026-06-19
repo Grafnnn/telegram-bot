@@ -23,6 +23,31 @@ Do not use this workflow as proof of visual quality or production readiness. It
 only proves that the route fails closed for protected-region drift and
 size-mismatched provider output.
 
+## GitHub Actions Automation
+
+The repository also includes a manual `workflow_dispatch` workflow:
+
+```text
+.github/workflows/route-preservation-smoke.yml
+```
+
+Use it for test-only automation when you want the same route-level smoke
+coverage without touching staging. The workflow:
+
+- runs only when manually dispatched;
+- uses a disposable PostgreSQL service database;
+- uses placeholder test env values only;
+- creates a synthetic published fabric fixture in the test database;
+- exercises `scripts/smoke_user_photo_preservation_route.py` through the
+  backend route/service orchestration;
+- uses the deterministic in-process fake provider;
+- must not use Render, staging secrets, real OpenAI/provider calls, or real user
+  photos.
+
+This workflow is a regression check for code changes. It is not a substitute for
+the staging runbook when a release specifically needs staging target, deploy,
+and log confirmation.
+
 ## Safety Rules
 
 Allowed:
@@ -192,6 +217,6 @@ S. Follow-up:
 
 ## Decision
 
-Keep this workflow manual until there is a separate decision to add a CI or
-staging automation wrapper. Do not automate staging runs in a way that can
-silently create app-level data or require secret values in logs.
+Keep staging execution manual until there is a separate decision to add staging
+automation. Do not automate staging runs in a way that can silently create
+app-level data or require secret values in logs.
