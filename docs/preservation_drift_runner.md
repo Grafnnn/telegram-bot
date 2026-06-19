@@ -198,6 +198,88 @@ measurement should remain a developer-only harness, become an admin/internal
 review metric, become a runtime flag/rejection path, or justify another
 controlled OpenAI smoke with a synthetic/safe photo and a valid mask.
 
+## Issue #45 Route-Level Preservation Smoke
+
+`scripts/smoke_user_photo_preservation_route.py` is a backend-only smoke command
+for verifying that the `/api/generations/user-photo` route applies the masked
+preservation guardrail before exposing a provider output as successful.
+
+It is intended for Issue #45 after the code is deployed to staging. It does not
+call OpenAI or any external provider. Instead, it patches the in-process
+user-photo provider call with deterministic fake outputs and exercises the
+FastAPI route through `TestClient`.
+
+The smoke validates:
+
+- valid mask + good fake output completes and exposes `result_image_url`;
+- valid mask + protected-region drift is marked failed and leaves
+  `result_image_url` absent;
+- valid mask + size-mismatched fake output is marked failed and leaves
+  `result_image_url` absent;
+- exactly one fake provider invocation happens per case;
+- OpenAI/network providers are not invoked.
+
+It does not validate final visual quality, real OpenAI behavior, Telegram
+delivery, admin UI rendering, production rollout, or user-facing readiness.
+
+### Safety Gates
+
+The command is disabled by default and must be explicitly opted into:
+
+```bash
+export ALLOW_ROUTE_PRESERVATION_SMOKE=true
+```
+
+It refuses `APP_ENV=prod` and `APP_ENV=production`. It is suitable for local/dev
+and staging-only checks. It does not print `BOT_INTERNAL_TOKEN`; the script reads
+the configured value in-process only to authenticate its internal `TestClient`
+request.
+
+For staging, use an existing published AI-ready fabric whose selected reference
+image exists on the staging upload disk:
+
+```bash
+ALLOW_ROUTE_PRESERVATION_SMOKE=true \
+USER_PHOTO_MASK_MODE=provided \
+USER_PHOTO_REQUIRE_MASK_FOR_STRICT_EDIT=true \
+python3 scripts/smoke_user_photo_preservation_route.py \
+  --fabric-id 26dbdebb-2d4d-4859-bb28-955ca72221ba \
+  --case all \
+  --json-output /tmp/issue45-route-preservation-smoke.json \
+  --pretty
+```
+
+Expected success:
+
+- command exits `0`;
+- top-level `passes` is `true`;
+- `openai_invoked` is `false`;
+- `network_provider_invoked` is `false`;
+- `good` case has `generation_status=completed` and
+  `result_image_url_present=true`;
+- `protected_drift` and `size_mismatch` cases have `generation_status=failed`
+  and `result_image_url_present=false`.
+
+Expected failure conditions:
+
+- missing `ALLOW_ROUTE_PRESERVATION_SMOKE=true`;
+- `APP_ENV=prod` or `APP_ENV=production`;
+- missing or placeholder `BOT_INTERNAL_TOKEN`;
+- missing/non-published/non-ready fabric;
+- route result that exposes `result_image_url` for drift or size mismatch;
+- fake provider call count other than one per case.
+
+When run against a real staging backend configuration, this smoke performs normal
+application-level mutations through the route: generation records, synthetic
+user-photo uploads, synthetic mask uploads, and one successful generated upload
+for the good fake-output case. It does not perform imports, SQL, direct DB
+writes, production changes, or real provider calls.
+
+Passing this command after deploy can unblock Issue #45 for route-level
+preservation behavior, but it does not close the gate by itself. Issue #45 still
+needs an operator closeout confirming staging target, logs, and no
+secret/base64/raw-path leakage.
+
 ## Safety Boundaries
 
 This workflow must stay developer/tooling-only until a separate product decision
