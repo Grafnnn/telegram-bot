@@ -64,6 +64,69 @@ Example output:
 }
 ```
 
+## Run All Manifest Cases
+
+Use the experiment runner when you want an evidence pack across every case in a
+fixture manifest:
+
+```bash
+python3 scripts/run_preservation_drift_experiments.py \
+  --manifest /tmp/preservation-drift-fixtures/manifest.json \
+  --fixtures-root /tmp/preservation-drift-fixtures \
+  --output-dir /tmp/preservation-drift-reports \
+  --summary /tmp/preservation-drift-reports/summary.json \
+  --markdown-summary /tmp/preservation-drift-reports/summary.md
+```
+
+The runner reads every manifest case, runs the same drift calculation as
+`scripts/check_preservation_drift.py`, writes one JSON report per case into
+`--output-dir`, and writes an aggregate `summary.json`.
+
+By default, the process exits with `0` only when every case result matches its
+manifest `expected_pass` value. It exits non-zero when any expected outcome does
+not match the actual runner result. `--allow-unexpected` can be used during
+exploration when you still want the process to exit successfully while keeping
+the unexpected results in the summary.
+
+## Summary JSON
+
+`summary.json` is the machine-readable evidence pack for prompt/model
+experiments. It includes:
+
+- `total_cases` - number of manifest cases;
+- `passed_count` - cases whose measured drift passed their thresholds;
+- `failed_count` - cases whose measured drift exceeded their thresholds;
+- `expected_match_count` - cases where `actual_pass` matched `expected_pass`;
+- `unexpected_result_count` - cases where actual and expected did not match;
+- `all_expected` - true only when every case matched expectation;
+- `cases` - per-case summaries with the report path, thresholds, drift metrics,
+  and optional notes.
+
+The per-case fields to compare across experiments are:
+
+- `expected_pass` - the manifest's intended outcome for this fixture;
+- `actual_pass` - the measured runner outcome;
+- `expected_matches_actual` - whether this fixture behaved as expected;
+- `drift.mean_delta`;
+- `drift.changed_pixel_percent`;
+- `drift.max_delta`.
+
+## Markdown Summary
+
+If `--markdown-summary` is provided, the runner writes a concise table with:
+
+- case;
+- expected;
+- actual;
+- match;
+- mean_delta;
+- changed_pixel_percent;
+- max_delta;
+- notes.
+
+Use this Markdown file for human review notes. Keep `summary.json` as the source
+of truth for scripts and CI.
+
 ## Tune Thresholds
 
 ```bash
@@ -88,9 +151,16 @@ For prompt or model comparisons:
 1. Save the original synthetic or sanitized source image as `base.png`.
 2. Save the candidate generated result as `candidate.png`.
 3. Save the exact edit mask as `mask.png`.
-4. Run the drift runner and store the JSON report next to the experiment.
-5. Compare reports across prompts/models before deciding whether another visual
+4. Create or update a manifest case with explicit thresholds and `expected_pass`.
+5. Run `scripts/run_preservation_drift_experiments.py`.
+6. Store `summary.json`, `summary.md`, and per-case reports next to the experiment.
+7. Compare reports across prompts/models before deciding whether another visual
    smoke is worth running.
+
+Use the collected reports as evidence before deciding whether preservation
+measurement should remain a developer-only harness, become an admin/internal
+review metric, become a runtime flag/rejection path, or justify another
+controlled OpenAI smoke with a synthetic/safe photo and a valid mask.
 
 ## Safety Boundaries
 
@@ -102,4 +172,7 @@ sets stable thresholds and rollout behavior.
 - Do not connect it to Telegram delivery.
 - Do not use it as a production rejection gate yet.
 - Do not write to staging/prod databases from this workflow.
+- Do not run imports, SQL, or direct DB writes from this workflow.
+- Do not include secrets, base64 images, raw image bytes, raw provider traces, or
+  prompt-only/no-mask fallback behavior in reports.
 - Store only synthetic or explicitly sanitized fixtures and reports.
