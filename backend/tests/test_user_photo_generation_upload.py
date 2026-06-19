@@ -41,6 +41,30 @@ def _mask_bytes(size: tuple[int, int] = (300, 300), box: tuple[int, int, int, in
     return buffer.getvalue()
 
 
+def _provider_output_changing_only_mask(user_photo_path: str, mask_image_path: str, color=(180, 30, 180)) -> bytes:
+    with Image.open(user_photo_path) as base_image, Image.open(mask_image_path) as mask_image:
+        candidate = base_image.convert("RGB")
+        alpha = mask_image.convert("RGBA").getchannel("A")
+        pixels = candidate.load()
+        for y in range(candidate.height):
+            for x in range(candidate.width):
+                if alpha.getpixel((x, y)) < 128:
+                    pixels[x, y] = color
+    buffer = BytesIO()
+    candidate.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _provider_output_changing_protected_region(user_photo_path: str, mask_image_path: str) -> bytes:
+    with Image.open(user_photo_path) as base_image:
+        candidate = base_image.convert("RGB")
+    draw = ImageDraw.Draw(candidate)
+    draw.rectangle((0, 0, candidate.width - 1, max(1, candidate.height // 5)), fill=(250, 20, 20))
+    buffer = BytesIO()
+    candidate.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 def _admin_headers(client: TestClient) -> dict[str, str]:
     response = client.post("/api/auth/login", json={"email": "admin@example.com", "password": "admin12345"})
     assert response.status_code == 200, response.text
@@ -328,7 +352,8 @@ def test_user_photo_generation_mock_mask_mode_stores_and_sends_mask(client: Test
         captured["fabric_reference_path"] = fabric_reference_path
         captured["prompt"] = prompt
         captured["mask_image_path"] = mask_image_path
-        return PNG_1X1
+        assert mask_image_path is not None
+        return _provider_output_changing_only_mask(user_photo_path, mask_image_path)
 
     monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
 
@@ -347,6 +372,7 @@ def test_user_photo_generation_mock_mask_mode_stores_and_sends_mask(client: Test
     assert Path(captured["mask_image_path"] or "").parent.name == "user-photo-masks"
     assert "A clothing edit mask is provided" in (captured["prompt"] or "")
     assert "Preserve all non-editable regions exactly" in (captured["prompt"] or "")
+    assert payload["result_image_url"].startswith("/uploads/generations/")
 
 
 def test_user_photo_generation_provided_mask_mode_stores_and_sends_mask(client: TestClient, monkeypatch) -> None:
@@ -365,7 +391,8 @@ def test_user_photo_generation_provided_mask_mode_stores_and_sends_mask(client: 
     ) -> bytes:
         captured["mask_image_path"] = mask_image_path
         captured["prompt"] = prompt
-        return PNG_1X1
+        assert mask_image_path is not None
+        return _provider_output_changing_only_mask(user_photo_path, mask_image_path)
 
     monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
 
@@ -391,6 +418,111 @@ def test_user_photo_generation_provided_mask_mode_stores_and_sends_mask(client: 
     assert "A clothing edit mask is provided" in (captured["prompt"] or "")
     assert "strict inpainting/editing task" in (captured["prompt"] or "")
     assert "Do not change face, eyes, glasses" in (captured["prompt"] or "")
+
+
+def test_user_photo_generation_provided_mask_rejects_protected_region_drift(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    log_messages: list[str] = []
+    monkeypatch.setenv("USER_PHOTO_MASK_MODE", "provided")
+    get_settings.cache_clear()
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+    ) -> bytes:
+        assert mask_image_path is not None
+        return _provider_output_changing_protected_region(user_photo_path, mask_image_path)
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+    monkeypatch.setattr(
+        generation_routes.logger,
+        "warning",
+        lambda message, *args: log_messages.append(message % args),
+    )
+
+    try:
+        response = _post_user_photo(
+            client,
+            fabric_id,
+            PNG_300,
+            "image/png",
+            BOT_HEADERS,
+            mask_content=_mask_bytes(),
+        )
+    finally:
+        monkeypatch.delenv("USER_PHOTO_MASK_MODE", raising=False)
+        get_settings.cache_clear()
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["status"] == "failed"
+    assert payload["result_image_url"] is None
+    assert payload["mask_image_url"].startswith("/uploads/user-photo-masks/")
+    assert "сохранить исходное фото" in payload["error_message"]
+    assert not any((get_settings().upload_dir / "generations").iterdir())
+    admin_response = client.get("/api/admin/generations?status=failed", headers=_admin_headers(client))
+    assert admin_response.status_code == 200, admin_response.text
+    [admin_generation] = admin_response.json()["items"]
+    assert admin_generation["id"] == payload["id"]
+    assert admin_generation["result_image_url"] is None
+    assert "сохранить исходное фото" in admin_generation["error_message"]
+    log_text = "\n".join(log_messages)
+    assert "preservation guardrail failed" in log_text
+    assert "mean_delta=" in log_text
+    assert str(get_settings().upload_dir) not in log_text
+    assert "OPENAI_API_KEY" not in log_text
+    assert "BOT_INTERNAL_TOKEN" not in log_text
+    assert "data:image" not in log_text
+    assert "base64" not in log_text
+
+
+def test_user_photo_generation_provided_mask_rejects_size_mismatched_provider_output(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    monkeypatch.setenv("USER_PHOTO_MASK_MODE", "provided")
+    get_settings.cache_clear()
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+    ) -> bytes:
+        assert mask_image_path is not None
+        return PNG_1X1
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+
+    try:
+        response = _post_user_photo(
+            client,
+            fabric_id,
+            PNG_300,
+            "image/png",
+            BOT_HEADERS,
+            mask_content=_mask_bytes(),
+        )
+    finally:
+        monkeypatch.delenv("USER_PHOTO_MASK_MODE", raising=False)
+        get_settings.cache_clear()
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["status"] == "failed"
+    assert payload["result_image_url"] is None
+    assert "сохранить исходное фото" in payload["error_message"]
+    assert not any((get_settings().upload_dir / "generations").iterdir())
 
 
 def test_user_photo_generation_provided_mask_mode_requires_mask_before_provider(

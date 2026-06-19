@@ -16,6 +16,42 @@ The report includes the thresholds used, the measured drift, and a boolean
 `passes` value. The process exits with `0` when `passes=true` and non-zero when
 the protected-region drift exceeds the configured thresholds.
 
+## Runtime Guardrail
+
+Masked user-photo generation also runs a backend post-generation preservation
+guardrail before a provider output is saved as a successful result.
+
+The runtime guardrail uses the same mask convention and drift math as this
+developer runner:
+
+- transparent mask pixels are editable clothing pixels;
+- opaque mask pixels are protected;
+- provider output must have the same dimensions as the original source image
+  and mask;
+- protected-region drift must stay under the configured thresholds.
+
+Default runtime thresholds:
+
+```env
+USER_PHOTO_PRESERVATION_CHECK_ENABLED=true
+USER_PHOTO_PRESERVATION_MAX_MEAN_DELTA=1
+USER_PHOTO_PRESERVATION_MAX_CHANGED_PIXEL_PERCENT=1
+USER_PHOTO_PRESERVATION_PIXEL_DELTA_THRESHOLD=8
+```
+
+When the guardrail fails, the generation is marked `failed`, the provider output
+is not exposed as a successful `/uploads/generations/...` result, and the user
+receives a safe message such as:
+
+```text
+Не удалось безопасно сохранить исходное фото вне области одежды. Попробуйте другое фото или маску.
+```
+
+This guardrail prevents unsafe provider outputs from being silently treated as
+successful, but it is not a guarantee of final visual quality. Real user-photo
+rollout remains blocked until multiple controlled evidence gates show stable
+preservation behavior and a separate product decision approves enablement.
+
 ## Generate Synthetic Fixtures
 
 The repository includes deterministic synthetic fixtures so prompt/model
