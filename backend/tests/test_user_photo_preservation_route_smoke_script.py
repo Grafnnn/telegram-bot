@@ -4,9 +4,15 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from uuid import uuid4
 
 from PIL import Image
 import pytest
+
+from app.config import get_settings
+from app.database import SessionLocal
+from app.models.fabric import Fabric
+from app.models.fabric_image import FabricImage
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -98,6 +104,58 @@ def test_route_smoke_script_prints_non_secret_error_when_not_opted_in() -> None:
     assert "ALLOW_ROUTE_PRESERVATION_SMOKE" in payload["error"]
     assert "BOT_INTERNAL_TOKEN" not in result.stderr
     assert "OPENAI_API_KEY" not in result.stderr
+
+
+def test_route_smoke_run_smoke_all_cases_exercises_generation_route(client) -> None:
+    fabric_id = _create_published_fabric_with_reference()
+
+    report = smoke_script.run_smoke(fabric_id=fabric_id, cases=list(smoke_script.SMOKE_CASES))
+
+    assert report["passes"] is True
+    assert report["provider"] == "deterministic_fake_in_process"
+    assert report["openai_invoked"] is False
+    assert report["network_provider_invoked"] is False
+
+    cases = {case["case"]: case for case in report["cases"]}
+    assert set(cases) == {"good", "protected_drift", "size_mismatch"}
+    assert cases["good"]["http_status"] == 201
+    assert cases["good"]["generation_status"] == "completed"
+    assert cases["good"]["result_image_url_present"] is True
+    assert cases["good"]["mask_image_url_present"] is True
+    assert cases["good"]["provider_calls"] == 1
+    assert cases["good"]["passed"] is True
+    for case_name in ["protected_drift", "size_mismatch"]:
+        assert cases[case_name]["http_status"] == 201
+        assert cases[case_name]["generation_status"] == "failed"
+        assert cases[case_name]["result_image_url_present"] is False
+        assert cases[case_name]["mask_image_url_present"] is True
+        assert cases[case_name]["provider_calls"] == 1
+        assert cases[case_name]["passed"] is True
+        assert cases[case_name]["error_message_category"] == "preservation_guardrail"
+
+
+def _create_published_fabric_with_reference() -> str:
+    image_url = f"/uploads/fabrics/{uuid4().hex}-texture.png"
+    upload_path = get_settings().upload_dir / image_url.removeprefix("/uploads/")
+    upload_path.parent.mkdir(parents=True, exist_ok=True)
+    upload_path.write_bytes(smoke_script.synthetic_user_photo_bytes())
+
+    with SessionLocal() as db:
+        fabric = Fabric(
+            sku=f"ROUTE-SMOKE-{uuid4().hex[:10]}",
+            name="Route smoke fabric",
+            category="test",
+            price_per_meter=100,
+            stock_status="in_stock",
+            description_for_gpt="Synthetic route-level smoke fabric.",
+            status="published",
+        )
+        db.add(fabric)
+        db.commit()
+        db.refresh(fabric)
+        db.add(FabricImage(fabric_id=fabric.id, image_url=image_url, image_type="texture", sort_order=0))
+        db.commit()
+        return str(fabric.id)
 
 
 def _write_bytes(path: Path, content: bytes) -> Path:
