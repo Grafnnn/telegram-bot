@@ -31,6 +31,9 @@ PRESERVATION_REPORT = (
 VISUAL_REPORT = (
     REPO_ROOT / "docs" / "experiments" / "reports" / "provider_mask_visual_quality_rehearsal_001.md"
 )
+EXECUTION_REPORT = (
+    REPO_ROOT / "docs" / "experiments" / "reports" / "provider_mask_execution_001.md"
+)
 
 EXPECTED_FIXTURES = ["pm001-solid-frontal", "pm001-pattern-boundary"]
 IMAGE_FIELDS = ["source_image_reference", "mask_reference", "fabric_reference", "fake_output_reference"]
@@ -53,6 +56,7 @@ SCAN_PATHS = [
     VISUAL_REPORT,
     REPO_ROOT / "scripts" / "generate_provider_mask_offline_rehearsal.py",
     REPO_ROOT / "scripts" / "validate_provider_mask_offline_rehearsal.py",
+    EXECUTION_REPORT,
 ]
 
 
@@ -151,17 +155,28 @@ def _validate_manifest(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def _validate_packet(packet: str) -> None:
-    required = [
+    shared_required = [
         "Status: DRAFT / NOT APPROVED FOR EXECUTION",
-        "Execution approval: NOT APPROVED",
         "Issue: [#56](https://github.com/Grafnnn/telegram-bot/issues/56)",
         "Expected provider calls: 2",
         "Maximum allowed provider calls: 3",
         "Offline rehearsal artifacts:",
     ]
-    missing = [phrase for phrase in required if phrase not in packet]
-    if missing:
-        raise AssertionError(f"Packet missing required offline rehearsal references: {', '.join(missing)}")
+    executed_required = [
+        "Status: EXECUTED / NO-GO FOR USER-FACING ROLLOUT",
+        "Execution result: NO-GO for user-facing rollout",
+        "This result does not authorize additional provider/OpenAI calls.",
+        "Issue: [#56](https://github.com/Grafnnn/telegram-bot/issues/56)",
+        "Expected provider calls: 2",
+        "Maximum allowed provider calls: 3",
+        "Offline rehearsal artifacts:",
+    ]
+    if all(phrase in packet for phrase in shared_required):
+        return
+    if all(phrase in packet for phrase in executed_required):
+        return
+    missing = [phrase for phrase in executed_required if phrase not in packet]
+    raise AssertionError(f"Packet missing required offline rehearsal references: {', '.join(missing)}")
 
 
 def _validate_preservation_report(report: dict[str, Any], fixture_ids: set[str]) -> None:

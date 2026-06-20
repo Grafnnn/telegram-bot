@@ -266,6 +266,15 @@ Offline rehearsal for `provider-mask-001` is available at:
 This rehearsal validates synthetic fixtures, masks, fake-provider output, and
 report plumbing only. It does not authorize provider/OpenAI calls.
 
+The controlled provider execution for `provider-mask-001` was later approved
+and completed once. It produced a NO-GO result for user-facing rollout:
+
+- [`docs/experiments/reports/provider_mask_execution_001.md`](experiments/reports/provider_mask_execution_001.md)
+- [`docs/experiments/reports/provider_mask_execution_001.json`](experiments/reports/provider_mask_execution_001.json)
+
+The tested `gpt-image-1` image-edit path with provided masks generated images
+but failed protected-region preservation on both synthetic fixtures.
+
 Minimum packet fields:
 
 ```text

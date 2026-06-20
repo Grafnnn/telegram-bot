@@ -63,8 +63,8 @@ def test_provider_mask_rehearsal_reports_remain_non_execution_artifacts() -> Non
     preservation = json.loads(PRESERVATION_REPORT.read_text(encoding="utf-8"))
     visual = VISUAL_REPORT.read_text(encoding="utf-8")
 
-    assert "Status: DRAFT / NOT APPROVED FOR EXECUTION" in packet
-    assert "Execution approval: NOT APPROVED" in packet
+    assert "Status: EXECUTED / NO-GO FOR USER-FACING ROLLOUT" in packet
+    assert "Execution result: NO-GO for user-facing rollout" in packet
     assert preservation["provider_openai_called"] is False
     assert preservation["experiment_executed"] is False
     assert all(entry["pass_fail"] == "pass" for entry in preservation["entries"])
