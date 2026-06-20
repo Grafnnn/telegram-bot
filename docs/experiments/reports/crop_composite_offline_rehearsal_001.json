@@ -1,0 +1,66 @@
+{
+  "rehearsal_id": "crop-composite-offline-001",
+  "status": "offline_rehearsal_passed",
+  "provider_openai_called": false,
+  "experiment_executed": false,
+  "runtime_behavior_changed": false,
+  "provider_calls_authorized": false,
+  "user_facing_rollout_approved": false,
+  "fixture_manifest": "docs/experiments/fixtures/provider_mask_fixture_manifest_001.json",
+  "thresholds": {
+    "max_mean_delta": 1.0,
+    "max_changed_pixel_percent": 1.0,
+    "pixel_delta_threshold": 8
+  },
+  "fixtures": [
+    {
+      "fixture_id": "pm001-solid-frontal",
+      "source_image": "docs/experiments/assets/provider-mask-001/pm001-solid-frontal-source.png",
+      "mask_image": "docs/experiments/assets/provider-mask-001/pm001-solid-frontal-mask.png",
+      "fabric_image": "docs/experiments/assets/provider-mask-001/pm001-solid-frontal-fabric.png",
+      "crop_bounds": {
+        "left": 52,
+        "top": 58,
+        "right": 109,
+        "bottom": 163
+      },
+      "crop_padding_pixels": 8,
+      "crop_source": "docs/experiments/assets/crop-composite-001/pm001-solid-frontal/crop_source.png",
+      "crop_mask": "docs/experiments/assets/crop-composite-001/pm001-solid-frontal/crop_mask.png",
+      "fake_crop_edit": "docs/experiments/assets/crop-composite-001/pm001-solid-frontal/fake_crop_edit.png",
+      "composite_output": "docs/experiments/assets/crop-composite-001/pm001-solid-frontal/composite_output.png",
+      "mean_delta_protected_region": 0.0,
+      "changed_pixel_percent_protected_region": 0.0,
+      "max_delta_protected_region": 0,
+      "protected_pixel_count": 28495,
+      "editable_pixel_count": 3505,
+      "protected_region_drift": false,
+      "pass_fail": "pass"
+    },
+    {
+      "fixture_id": "pm001-pattern-boundary",
+      "source_image": "docs/experiments/assets/provider-mask-001/pm001-pattern-boundary-source.png",
+      "mask_image": "docs/experiments/assets/provider-mask-001/pm001-pattern-boundary-mask.png",
+      "fabric_image": "docs/experiments/assets/provider-mask-001/pm001-pattern-boundary-fabric.png",
+      "crop_bounds": {
+        "left": 43,
+        "top": 59,
+        "right": 118,
+        "bottom": 125
+      },
+      "crop_padding_pixels": 8,
+      "crop_source": "docs/experiments/assets/crop-composite-001/pm001-pattern-boundary/crop_source.png",
+      "crop_mask": "docs/experiments/assets/crop-composite-001/pm001-pattern-boundary/crop_mask.png",
+      "fake_crop_edit": "docs/experiments/assets/crop-composite-001/pm001-pattern-boundary/fake_crop_edit.png",
+      "composite_output": "docs/experiments/assets/crop-composite-001/pm001-pattern-boundary/composite_output.png",
+      "mean_delta_protected_region": 0.0,
+      "changed_pixel_percent_protected_region": 0.0,
+      "max_delta_protected_region": 0,
+      "protected_pixel_count": 29774,
+      "editable_pixel_count": 2226,
+      "protected_region_drift": false,
+      "pass_fail": "pass"
+    }
+  ],
+  "decision": "READY_FOR_CAPPED_PROVIDER_PACKET_DESIGN_ONLY"
+}

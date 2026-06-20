@@ -234,6 +234,11 @@ The next architecture candidate is documented in
 That strategy proposes segmentation-first crop/edit/composite gates to reduce
 the provider's opportunity to regenerate the entire scene.
 
+The first offline rehearsal for that path is documented in
+[`docs/experiments/reports/crop_composite_offline_rehearsal_001.md`](experiments/reports/crop_composite_offline_rehearsal_001.md).
+It validates local crop/composite mechanics only; it does not validate a real
+provider or approve future provider calls.
+
 Before any real provider experiment, require an execution packet:
 
 - target: local/dev or exact staging-safe target;

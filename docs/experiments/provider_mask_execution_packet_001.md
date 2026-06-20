@@ -10,6 +10,10 @@ The execution result was a preservation failure on both planned fixtures.
 The tested provider path must not be used for user-facing try-on rollout
 without a new strategy and a new explicitly approved evidence gate.
 
+The next local/test-only strategy line is segmentation-first crop/composite.
+Its first offline rehearsal report is:
+[`docs/experiments/reports/crop_composite_offline_rehearsal_001.md`](reports/crop_composite_offline_rehearsal_001.md).
+
 This result does not authorize provider strategy selection.
 This result does not authorize user-facing rollout.
 This result does not authorize additional provider/OpenAI calls.

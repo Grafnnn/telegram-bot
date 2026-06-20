@@ -234,6 +234,21 @@ geometry first: editable mask bounds, crop-local source/mask alignment,
 compositing only through transparent mask pixels, and preservation pass outside
 the editable clothing region.
 
+Crop/composite offline rehearsal 001 validates the local mechanics of:
+
+- mask-derived crop bounds;
+- crop-local edit surface;
+- compositing back through the mask;
+- protected-region preservation check.
+
+This does not validate any real provider.
+This does not approve provider/OpenAI calls.
+This does not approve rollout.
+
+The next provider-facing test should prefer sending only the garment crop/edit
+surface where possible, then compositing the result back locally, instead of
+asking the provider to edit the full person/scene.
+
 ## Open Questions
 
 - Which segmentation source should be used for the first real provider crop
