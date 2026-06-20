@@ -52,6 +52,12 @@ successful, but it is not a guarantee of final visual quality. Real user-photo
 rollout remains blocked until multiple controlled evidence gates show stable
 preservation behavior and a separate product decision approves enablement.
 
+For the visual quality and provider strategy gate, see
+[`docs/visual_quality_provider_strategy.md`](visual_quality_provider_strategy.md).
+That document defines the product-quality rubric, provider and mask strategy
+matrices, future experiment gates, and the reusable visual review report
+template.
+
 ## Generate Synthetic Fixtures
 
 The repository includes deterministic synthetic fixtures so prompt/model
