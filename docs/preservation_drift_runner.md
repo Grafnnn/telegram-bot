@@ -58,6 +58,11 @@ That document defines the product-quality rubric, provider and mask strategy
 matrices, future experiment gates, and the reusable visual review report
 template.
 
+The first controlled provider/mask execution result is documented at
+[`docs/experiments/reports/provider_mask_execution_001.md`](experiments/reports/provider_mask_execution_001.md).
+That execution failed preservation on both synthetic fixtures, so the tested
+provider/mask path is not approved for user-facing try-on rollout.
+
 ## Generate Synthetic Fixtures
 
 The repository includes deterministic synthetic fixtures so prompt/model

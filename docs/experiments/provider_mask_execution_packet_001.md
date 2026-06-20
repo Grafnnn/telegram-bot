@@ -2,16 +2,17 @@
 
 ## Status
 
-Status: DRAFT / NOT APPROVED FOR EXECUTION
+Status: EXECUTED / NO-GO FOR USER-FACING ROLLOUT
 
-This packet does not authorize provider/OpenAI calls.
-This packet does not authorize experiment execution.
-This packet does not authorize provider strategy selection.
-This packet does not authorize user-facing rollout.
-A separate explicit approval is required before any provider call.
+This packet was executed once after explicit approval in Issue #56.
 
-Until the Approval section is completed and approved, this packet is
-documentation only.
+The execution result was a preservation failure on both planned fixtures.
+The tested provider path must not be used for user-facing try-on rollout
+without a new strategy and a new explicitly approved evidence gate.
+
+This result does not authorize provider strategy selection.
+This result does not authorize user-facing rollout.
+This result does not authorize additional provider/OpenAI calls.
 
 ## Metadata
 
@@ -29,9 +30,14 @@ Reviewer: TBD
 
 Target environment: local/dev only by default
 
-Execution status: not executed
+Execution status: executed
 
-Approval status: not approved
+Approval status: approved once for Issue #56 execution only
+
+Execution result: NO-GO for user-facing rollout
+
+Execution report:
+[`docs/experiments/reports/provider_mask_execution_001.md`](reports/provider_mask_execution_001.md)
 
 ## Scope
 
@@ -76,7 +82,7 @@ Current safe baseline:
 - PR #57 merged;
 - Issue #56 linked as approval gate, not approval to execute;
 - controlled provider/mask experiment planning docs exist;
-- provider/OpenAI execution is not approved;
+- provider/OpenAI execution has completed exactly once for this packet;
 - provider strategy is not approved;
 - user-facing rollout is not approved.
 

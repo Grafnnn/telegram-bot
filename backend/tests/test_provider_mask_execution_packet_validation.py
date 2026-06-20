@@ -24,12 +24,13 @@ def test_provider_mask_execution_packet_validator_passes() -> None:
     assert "validated" in result.stdout
 
 
-def test_provider_mask_execution_packet_remains_not_approved() -> None:
+def test_provider_mask_execution_packet_records_no_go_result() -> None:
     packet = PACKET_PATH.read_text(encoding="utf-8")
 
-    assert "Status: DRAFT / NOT APPROVED FOR EXECUTION" in packet
-    assert "Execution approval: NOT APPROVED" in packet
-    assert "This packet does not authorize provider/OpenAI calls." in packet
+    assert "Status: EXECUTED / NO-GO FOR USER-FACING ROLLOUT" in packet
+    assert "Execution status: executed" in packet
+    assert "Execution result: NO-GO for user-facing rollout" in packet
+    assert "This result does not authorize additional provider/OpenAI calls." in packet
     assert "Maximum allowed provider calls: 3" in packet
 
 

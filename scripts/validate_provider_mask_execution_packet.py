@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Validate the provider/mask execution packet proposal.
+"""Validate the provider/mask execution packet.
 
-The validator is offline-only. It checks that packet 001 remains a draft
-approval packet, that the fixture manifest is synthetic-only metadata, and that
-the proposal does not contain obvious secrets or raw image payloads.
+The validator is offline-only. It checks that packet 001 is either still a
+draft approval packet or has a safely documented executed NO-GO result, that
+the fixture manifest is synthetic-only metadata, and that the packet does not
+contain obvious secrets or raw image payloads.
 """
 
 from __future__ import annotations
@@ -47,7 +48,7 @@ PACKET_SECTIONS = [
     "## Final Decision",
 ]
 
-REQUIRED_PACKET_PHRASES = [
+REQUIRED_DRAFT_PACKET_PHRASES = [
     "Status: DRAFT / NOT APPROVED FOR EXECUTION",
     "This packet does not authorize provider/OpenAI calls.",
     "This packet does not authorize experiment execution.",
@@ -59,6 +60,20 @@ REQUIRED_PACKET_PHRASES = [
     "Maximum allowed provider calls: 3",
     "Execution approval: NOT APPROVED",
     "Until this section is completed and approved, this packet is documentation only.",
+    "No-mask prompt-only mode is not allowed for this experiment.",
+]
+
+REQUIRED_EXECUTED_NO_GO_PACKET_PHRASES = [
+    "Status: EXECUTED / NO-GO FOR USER-FACING ROLLOUT",
+    "This packet was executed once after explicit approval in Issue #56.",
+    "This result does not authorize provider strategy selection.",
+    "This result does not authorize user-facing rollout.",
+    "This result does not authorize additional provider/OpenAI calls.",
+    "Execution status: executed",
+    "Approval status: approved once for Issue #56 execution only",
+    "Execution result: NO-GO for user-facing rollout",
+    "Expected provider calls: 2",
+    "Maximum allowed provider calls: 3",
     "No-mask prompt-only mode is not allowed for this experiment.",
 ]
 
@@ -145,6 +160,21 @@ def _require_phrases(text: str, phrases: list[str], *, path: Path) -> None:
         raise AssertionError(f"{_relative(path)} is missing required phrases: {', '.join(missing)}")
 
 
+def _require_supported_packet_state(text: str, *, path: Path) -> None:
+    try:
+        _require_phrases(text, REQUIRED_DRAFT_PACKET_PHRASES, path=path)
+        return
+    except AssertionError as draft_error:
+        try:
+            _require_phrases(text, REQUIRED_EXECUTED_NO_GO_PACKET_PHRASES, path=path)
+            return
+        except AssertionError as executed_error:
+            raise AssertionError(
+                f"{_relative(path)} is neither a valid draft packet nor a valid executed NO-GO packet. "
+                f"Draft validation: {draft_error}. Executed NO-GO validation: {executed_error}."
+            ) from executed_error
+
+
 def _extract_max_call_cap(text: str) -> int:
     match = re.search(r"Maximum allowed provider calls:\s*(\d+)", text)
     if not match:
@@ -218,7 +248,7 @@ def validate(packet_path: Path, manifest_path: Path) -> None:
     manifest = _read_json(manifest_path)
 
     _require_sections(packet, PACKET_SECTIONS, path=packet_path)
-    _require_phrases(packet, REQUIRED_PACKET_PHRASES, path=packet_path)
+    _require_supported_packet_state(packet, path=packet_path)
     if _extract_max_call_cap(packet) > 3:
         raise AssertionError("Maximum allowed provider call cap must be <= 3.")
     _reject_secret_patterns(packet_path, packet)

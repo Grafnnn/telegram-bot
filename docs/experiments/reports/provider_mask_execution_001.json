@@ -1,0 +1,58 @@
+{
+  "experiment_id": "provider-mask-001",
+  "issue": 56,
+  "status": "executed",
+  "decision": "NO_GO_USER_FACING_ROLLOUT",
+  "baseline": "main@0c4be13a232c13234be699325c030f8ec4d9a3a0",
+  "provider": {
+    "name": "OpenAI image editing provider",
+    "endpoint": "/v1/images/edits",
+    "model": "gpt-image-1",
+    "size": "1024x1536",
+    "quality": "medium",
+    "output_format": "png"
+  },
+  "call_control": {
+    "expected_provider_calls": 2,
+    "max_allowed_provider_calls": 3,
+    "actual_provider_calls": 2,
+    "retry_used": false
+  },
+  "thresholds": {
+    "max_mean_delta": 1.0,
+    "max_changed_pixel_percent": 1.0,
+    "pixel_delta_threshold": 8
+  },
+  "results": [
+    {
+      "fixture_id": "pm001-solid-frontal",
+      "provider_status": 200,
+      "preservation_passes": false,
+      "mean_delta": 115.8547,
+      "changed_protected_pixel_percent": 99.9975,
+      "max_delta": 255,
+      "verdict": "fail"
+    },
+    {
+      "fixture_id": "pm001-pattern-boundary",
+      "provider_status": 200,
+      "preservation_passes": false,
+      "mean_delta": 82.9435,
+      "changed_protected_pixel_percent": 99.9321,
+      "max_delta": 255,
+      "verdict": "fail"
+    }
+  ],
+  "safety": {
+    "prod_touched": false,
+    "staging_env_mutated": false,
+    "real_user_photos_used": false,
+    "sensitive_images_used": false,
+    "db_imports_sql_direct_writes": false,
+    "no_mask_fallback_used": false,
+    "telegram_or_admin_user_facing_enablement": false,
+    "secrets_printed": false,
+    "base64_or_raw_image_payloads_recorded": false
+  },
+  "conclusion": "The tested gpt-image-1 /v1/images/edits path with provided masks generated images but failed protected-region preservation on both controlled synthetic fixtures. It is not suitable for user-facing clothing-only try-on rollout without a new strategy and a new explicit evidence gate."
+}
