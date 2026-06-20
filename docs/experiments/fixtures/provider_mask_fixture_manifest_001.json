@@ -1,0 +1,50 @@
+{
+  "manifest_id": "provider-mask-fixture-manifest-001",
+  "status": "draft_not_approved_for_execution",
+  "real_user_photos_allowed": false,
+  "provider_execution_allowed": false,
+  "fixtures": [
+    {
+      "fixture_id": "pm001-solid-frontal",
+      "source_image_type": "synthetic",
+      "source_image_reference": "TBD synthetic fixture path or generated local fixture before execution",
+      "mask_reference": "TBD synthetic mask path before execution",
+      "fabric_reference": "TBD synthetic fabric reference before execution",
+      "fabric_category": "solid color",
+      "pose_garment_category": "frontal top/dress",
+      "expected_edit_region": "garment only",
+      "protected_regions": [
+        "face",
+        "hair",
+        "skin",
+        "hands",
+        "background"
+      ],
+      "input_class": "synthetic test fixture",
+      "allowed_target": "local/dev future execution only",
+      "reviewer": "TBD",
+      "notes": "No real user/customer/operator image allowed."
+    },
+    {
+      "fixture_id": "pm001-pattern-boundary",
+      "source_image_type": "synthetic",
+      "source_image_reference": "TBD synthetic fixture path or generated local fixture before execution",
+      "mask_reference": "TBD synthetic mask path before execution",
+      "fabric_reference": "TBD synthetic fabric reference before execution",
+      "fabric_category": "small pattern",
+      "pose_garment_category": "hands near garment boundary",
+      "expected_edit_region": "garment only",
+      "protected_regions": [
+        "face",
+        "hair",
+        "skin",
+        "hands",
+        "background"
+      ],
+      "input_class": "synthetic hard boundary test fixture",
+      "allowed_target": "local/dev future execution only",
+      "reviewer": "TBD",
+      "notes": "Hard boundary case. Hands must remain protected."
+    }
+  ]
+}

@@ -213,6 +213,11 @@ That plan defines the required fixture metadata, provider/mask fields, execution
 packet, safety pre-checks, stop conditions, artifact policy, and reporting
 format.
 
+The first concrete draft packet proposal is
+[`docs/experiments/provider_mask_execution_packet_001.md`](experiments/provider_mask_execution_packet_001.md).
+It remains documentation-only until its approval section is explicitly
+completed.
+
 Before any real provider experiment, require an execution packet:
 
 - target: local/dev or exact staging-safe target;
