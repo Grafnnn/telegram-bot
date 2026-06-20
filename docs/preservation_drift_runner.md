@@ -63,6 +63,11 @@ The first controlled provider/mask execution result is documented at
 That execution failed preservation on both synthetic fixtures, so the tested
 provider/mask path is not approved for user-facing try-on rollout.
 
+The next proposed architecture candidate is
+[`docs/segmentation_crop_composite_strategy.md`](segmentation_crop_composite_strategy.md).
+It keeps the preservation runner as the full-image guardrail after crop-local
+editing and compositing.
+
 ## Generate Synthetic Fixtures
 
 The repository includes deterministic synthetic fixtures so prompt/model
