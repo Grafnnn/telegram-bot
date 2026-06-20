@@ -17,7 +17,7 @@ documentation only.
 
 Experiment ID: provider-mask-001
 
-Issue: TBD - issue must be created and linked before execution.
+Issue: [#56](https://github.com/Grafnnn/telegram-bot/issues/56)
 
 PR: this PR
 
