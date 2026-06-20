@@ -228,6 +228,12 @@ The first implementation PR should stay local/test-only:
 - no route changes unless fake-provider smoke is included;
 - no staging/prod/env changes.
 
+Initial local/test-only helpers are expected to live under backend services and
+tests without being wired into runtime routes. They should prove deterministic
+geometry first: editable mask bounds, crop-local source/mask alignment,
+compositing only through transparent mask pixels, and preservation pass outside
+the editable clothing region.
+
 ## Open Questions
 
 - Which segmentation source should be used for the first real provider crop
