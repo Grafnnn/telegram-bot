@@ -206,6 +206,13 @@ Gate sequence:
 
 No gate should silently imply the next gate is approved.
 
+Before proposing a provider or mask execution, follow the controlled experiment
+planning gate in
+[`docs/controlled_provider_mask_experiment_plan.md`](controlled_provider_mask_experiment_plan.md).
+That plan defines the required fixture metadata, provider/mask fields, execution
+packet, safety pre-checks, stop conditions, artifact policy, and reporting
+format.
+
 Before any real provider experiment, require an execution packet:
 
 - target: local/dev or exact staging-safe target;
