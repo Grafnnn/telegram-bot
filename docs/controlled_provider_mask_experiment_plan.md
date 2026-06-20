@@ -253,6 +253,10 @@ Use the standalone template:
 
 - [`docs/templates/provider_mask_experiment_packet.md`](templates/provider_mask_experiment_packet.md)
 
+The first concrete draft packet proposal is:
+
+- [`docs/experiments/provider_mask_execution_packet_001.md`](experiments/provider_mask_execution_packet_001.md)
+
 Minimum packet fields:
 
 ```text
