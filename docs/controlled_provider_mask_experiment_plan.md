@@ -257,6 +257,15 @@ The first concrete draft packet proposal is:
 
 - [`docs/experiments/provider_mask_execution_packet_001.md`](experiments/provider_mask_execution_packet_001.md)
 
+Offline rehearsal for `provider-mask-001` is available at:
+
+- [`docs/experiments/assets/provider-mask-001/`](experiments/assets/provider-mask-001/)
+- [`docs/experiments/reports/provider_mask_preservation_rehearsal_001.json`](experiments/reports/provider_mask_preservation_rehearsal_001.json)
+- [`docs/experiments/reports/provider_mask_visual_quality_rehearsal_001.md`](experiments/reports/provider_mask_visual_quality_rehearsal_001.md)
+
+This rehearsal validates synthetic fixtures, masks, fake-provider output, and
+report plumbing only. It does not authorize provider/OpenAI calls.
+
 Minimum packet fields:
 
 ```text

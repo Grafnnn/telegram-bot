@@ -38,7 +38,10 @@ def test_provider_mask_fixture_manifest_is_synthetic_only() -> None:
 
     assert manifest["real_user_photos_allowed"] is False
     assert manifest["provider_execution_allowed"] is False
-    assert manifest["status"] == "draft_not_approved_for_execution"
+    assert manifest["status"] in {
+        "draft_not_approved_for_execution",
+        "offline_rehearsal_ready_not_approved_for_execution",
+    }
     assert [fixture["fixture_id"] for fixture in manifest["fixtures"]] == [
         "pm001-solid-frontal",
         "pm001-pattern-boundary",

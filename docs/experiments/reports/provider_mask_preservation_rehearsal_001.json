@@ -1,0 +1,38 @@
+{
+  "entries": [
+    {
+      "background_drift": false,
+      "changed_pixel_percent_protected_region": 0.0,
+      "fake_output_image": "docs/experiments/assets/provider-mask-001/pm001-solid-frontal-fake-output.png",
+      "fixture_id": "pm001-solid-frontal",
+      "identity_face_drift": false,
+      "mask_boundary_drift": false,
+      "mask_image": "docs/experiments/assets/provider-mask-001/pm001-solid-frontal-mask.png",
+      "max_delta_protected_region": 0,
+      "mean_delta_protected_region": 0.0,
+      "notes": "Fake output applies changes only inside the synthetic garment mask.",
+      "pass_fail": "pass",
+      "protected_region_drift": false,
+      "source_image": "docs/experiments/assets/provider-mask-001/pm001-solid-frontal-source.png"
+    },
+    {
+      "background_drift": false,
+      "changed_pixel_percent_protected_region": 0.0,
+      "fake_output_image": "docs/experiments/assets/provider-mask-001/pm001-pattern-boundary-fake-output.png",
+      "fixture_id": "pm001-pattern-boundary",
+      "identity_face_drift": false,
+      "mask_boundary_drift": false,
+      "mask_image": "docs/experiments/assets/provider-mask-001/pm001-pattern-boundary-mask.png",
+      "max_delta_protected_region": 0,
+      "mean_delta_protected_region": 0.0,
+      "notes": "Fake output applies changes only inside the synthetic garment mask.",
+      "pass_fail": "pass",
+      "protected_region_drift": false,
+      "source_image": "docs/experiments/assets/provider-mask-001/pm001-pattern-boundary-source.png"
+    }
+  ],
+  "experiment_executed": false,
+  "provider_openai_called": false,
+  "report_id": "provider-mask-preservation-rehearsal-001",
+  "status": "offline_rehearsal_only_not_provider_execution"
+}

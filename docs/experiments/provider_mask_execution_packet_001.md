@@ -21,7 +21,7 @@ Issue: [#56](https://github.com/Grafnnn/telegram-bot/issues/56)
 
 PR: this PR
 
-Baseline: main@1da72c98fa544ae5fc727c61c6f426cf1b462e41
+Baseline: main@407d3458064e2717d51cdd4372a1ef2c20d39f7e
 
 Operator: TBD
 
@@ -73,8 +73,8 @@ is NO-GO. A safe but visually useless result is not rollout-ready.
 Current safe baseline:
 
 - main@1da72c98fa544ae5fc727c61c6f426cf1b462e41;
-- PR #54 merged;
-- Issue #53 closed / completed;
+- PR #57 merged;
+- Issue #56 linked as approval gate, not approval to execute;
 - controlled provider/mask experiment planning docs exist;
 - provider/OpenAI execution is not approved;
 - provider strategy is not approved;
@@ -180,15 +180,24 @@ Fixture manifest:
 
 - [`docs/experiments/fixtures/provider_mask_fixture_manifest_001.json`](fixtures/provider_mask_fixture_manifest_001.json)
 
+Offline rehearsal artifacts:
+
+- synthetic assets directory:
+  [`docs/experiments/assets/provider-mask-001/`](assets/provider-mask-001/)
+- preservation rehearsal report:
+  [`docs/experiments/reports/provider_mask_preservation_rehearsal_001.json`](reports/provider_mask_preservation_rehearsal_001.json)
+- visual quality rehearsal report:
+  [`docs/experiments/reports/provider_mask_visual_quality_rehearsal_001.md`](reports/provider_mask_visual_quality_rehearsal_001.md)
+
 The first packet includes exactly two planned synthetic-only fixtures:
 
 1. `pm001-solid-frontal`
 2. `pm001-pattern-boundary`
 
-No real image files are included in this PR. The manifest contains metadata
-placeholders only. Before any future execution, source, mask, and fabric
-references must be created or selected as synthetic/sanitized local/dev inputs
-and reviewed against the manifest.
+Only synthetic image files are included. The fake-provider outputs are
+deterministic offline rehearsal artifacts and are not provider outputs. Before
+any future provider execution, source, mask, and fabric references must still be
+reviewed against the manifest and approval packet.
 
 Fixture pack hard rules:
 
