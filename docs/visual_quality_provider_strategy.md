@@ -8,13 +8,16 @@ not a rollout plan.
 
 Current baseline:
 
-- `main@1d353f66b4bb05fcbb405706f5d0cb2d51ab6464`;
+- `main@16362186abfbfc6f2d708c9699b14146173801d5`;
 - Issue #45 completed: route-level preservation smoke gate;
 - Issue #47 completed: manual recurring smoke runbook;
 - Issue #49 completed: manual `workflow_dispatch` test-only smoke automation;
+- Issue #56 completed: controlled `provider-mask-001` execution recorded as
+  NO-GO for user-facing rollout;
 - PR #46 merged: safe route-level preservation smoke path;
 - PR #48 merged: recurring manual runbook;
 - PR #50 merged: manual GitHub Actions smoke automation.
+- PR #59 merged: redacted provider-mask NO-GO execution report.
 
 Already completed:
 
@@ -23,6 +26,8 @@ Already completed:
   calls;
 - provider outputs that fail preservation are not treated as successful
   user-photo try-on results;
+- direct full-image provider/mask execution failed preservation on 2/2
+  synthetic fixtures and is rejected for rollout;
 - no user-facing try-on rollout has been approved.
 
 Current posture:
@@ -135,6 +140,7 @@ No single sample can approve user-facing rollout.
 | Local/offline fake provider | Deterministic, safe, ideal for route contracts. | None for external provider behavior because it is not real. | Exact synthetic mask behavior. | Low. | None. | Excellent for CI and fail-closed checks. | Keep for tests only. |
 | Manual/operator-assisted workflow | Human can curate source, mask, and outputs. | Lower if review rejects bad outputs before delivery. | Strong if operator supplies valid masks. | High operational overhead. | Human time plus provider cost. | Good for internal evidence packs. | Explore for internal-only validation. |
 | Future segmentation-assisted workflow | Could reduce mask burden. | Depends on segmentation accuracy; wrong masks can be unsafe. | Generated mask, potentially previewable. | High: provider, validation, UX, safety review. | Medium/high. | Requires separate fixture and mask quality gates. | Future dedicated strategy issue. |
+| Segmentation-first crop/composite workflow | Reduces provider access to protected regions by editing a garment crop and compositing back. | Lower if crop, mask, and composite are correct; still must be proven. | Explicit crop-local mask plus final full-image preservation. | High: crop metadata, composite logic, boundary review, and route tests. | Medium/high depending on provider and crop size. | Good with synthetic fixtures, fake crop outputs, and capped provider gates. | Recommended next design candidate after provider-mask-001 NO-GO. |
 
 Provider strategy is not approved by this document. The default posture remains:
 controlled exploration only.
@@ -215,13 +221,18 @@ format.
 
 The first concrete draft packet proposal is
 [`docs/experiments/provider_mask_execution_packet_001.md`](experiments/provider_mask_execution_packet_001.md).
-It remains documentation-only until its approval section is explicitly
-completed.
+It was executed once and produced a NO-GO result for user-facing rollout. See
+[`docs/experiments/reports/provider_mask_execution_001.md`](experiments/reports/provider_mask_execution_001.md).
 
 Offline rehearsal artifacts for that packet are linked from the packet and from
 [`docs/controlled_provider_mask_experiment_plan.md`](controlled_provider_mask_experiment_plan.md).
 They use synthetic fixtures and fake-provider outputs only; they are not real
 provider quality evidence.
+
+The next architecture candidate is documented in
+[`docs/segmentation_crop_composite_strategy.md`](segmentation_crop_composite_strategy.md).
+That strategy proposes segmentation-first crop/edit/composite gates to reduce
+the provider's opportunity to regenerate the entire scene.
 
 Before any real provider experiment, require an execution packet:
 

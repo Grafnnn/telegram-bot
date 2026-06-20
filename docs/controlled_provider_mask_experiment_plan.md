@@ -275,6 +275,14 @@ and completed once. It produced a NO-GO result for user-facing rollout:
 The tested `gpt-image-1` image-edit path with provided masks generated images
 but failed protected-region preservation on both synthetic fixtures.
 
+The next proposed architecture candidate is segmentation-first crop/composite:
+
+- [`docs/segmentation_crop_composite_strategy.md`](segmentation_crop_composite_strategy.md)
+
+That design edits a garment crop, composites the result back into the original
+source image, and still requires full-image preservation checks before any
+result can be considered successful.
+
 Minimum packet fields:
 
 ```text
