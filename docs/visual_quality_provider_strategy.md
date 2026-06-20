@@ -218,6 +218,11 @@ The first concrete draft packet proposal is
 It remains documentation-only until its approval section is explicitly
 completed.
 
+Offline rehearsal artifacts for that packet are linked from the packet and from
+[`docs/controlled_provider_mask_experiment_plan.md`](controlled_provider_mask_experiment_plan.md).
+They use synthetic fixtures and fake-provider outputs only; they are not real
+provider quality evidence.
+
 Before any real provider experiment, require an execution packet:
 
 - target: local/dev or exact staging-safe target;

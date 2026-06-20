@@ -68,6 +68,7 @@ FIXTURE_FIELDS = {
     "source_image_reference",
     "mask_reference",
     "fabric_reference",
+    "fake_output_reference",
     "fabric_category",
     "pose_garment_category",
     "expected_edit_region",
@@ -173,8 +174,11 @@ def _reject_secret_patterns(path: Path, text: str) -> None:
 def _validate_manifest(payload: dict[str, Any], *, path: Path) -> None:
     if payload.get("manifest_id") != "provider-mask-fixture-manifest-001":
         raise AssertionError("Manifest id must be provider-mask-fixture-manifest-001.")
-    if payload.get("status") != "draft_not_approved_for_execution":
-        raise AssertionError("Manifest status must be draft_not_approved_for_execution.")
+    if payload.get("status") not in {
+        "draft_not_approved_for_execution",
+        "offline_rehearsal_ready_not_approved_for_execution",
+    }:
+        raise AssertionError("Manifest status must remain not approved for execution.")
     if payload.get("real_user_photos_allowed") is not False:
         raise AssertionError("Manifest must set real_user_photos_allowed to false.")
     if payload.get("provider_execution_allowed") is not False:
