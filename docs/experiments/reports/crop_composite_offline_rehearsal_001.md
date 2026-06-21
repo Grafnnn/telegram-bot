@@ -59,3 +59,10 @@ A future provider test still requires a separate capped approval gate.
 
 Design a new capped provider approval packet that tests crop-only or garment-region-only provider editing,
 followed by local composite and preservation guardrail.
+
+Packet proposal:
+[`docs/experiments/crop_only_provider_execution_packet_001.md`](../crop_only_provider_execution_packet_001.md).
+
+That packet is not execution approval. Provider/OpenAI remains NO-GO until a
+separate explicit approval gate confirms target, provider/model/config, call
+cap, cost/risk, artifact handling, and stop conditions.
