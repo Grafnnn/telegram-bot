@@ -283,6 +283,14 @@ That design edits a garment crop, composites the result back into the original
 source image, and still requires full-image preservation checks before any
 result can be considered successful.
 
+The first local/test-only crop/composite rehearsal is documented here:
+
+- [`docs/experiments/reports/crop_composite_offline_rehearsal_001.md`](experiments/reports/crop_composite_offline_rehearsal_001.md)
+- [`docs/experiments/reports/crop_composite_offline_rehearsal_001.json`](experiments/reports/crop_composite_offline_rehearsal_001.json)
+
+It validates only offline mechanics and does not approve provider/OpenAI calls
+or rollout.
+
 Minimum packet fields:
 
 ```text
