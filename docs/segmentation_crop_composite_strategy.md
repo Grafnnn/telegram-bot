@@ -259,6 +259,11 @@ The pre-execution readiness gate is documented in
 It freezes the crop-only inputs and keeps provider execution blocked until
 Issue #64 receives explicit GO.
 
+The first crop-only provider execution stopped at a provider output dimension
+mismatch. The follow-up strategy gate is documented in
+[`docs/experiments/crop_only_output_dimension_strategy_001.md`](experiments/crop_only_output_dimension_strategy_001.md).
+No retry is approved until that dimension strategy is resolved.
+
 ## Open Questions
 
 - Which segmentation source should be used for the first real provider crop

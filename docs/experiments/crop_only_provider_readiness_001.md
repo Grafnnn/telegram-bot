@@ -237,3 +237,17 @@ Provider/OpenAI calls remain blocked until this issue receives explicit GO.
 After this readiness gate is merged, Issue #64 may be reviewed for explicit GO.
 Only then may the capped crop-only provider execution run, and only within the
 approved packet constraints.
+
+## Execution Result 001
+
+The first crop-only provider attempt stopped at a dimension mismatch before
+local composite:
+
+[`docs/experiments/reports/crop_only_provider_execution_001.md`](reports/crop_only_provider_execution_001.md)
+
+Follow-up strategy gate:
+
+[`docs/experiments/crop_only_output_dimension_strategy_001.md`](crop_only_output_dimension_strategy_001.md)
+
+Provider/OpenAI retry remains blocked until a new explicit approval gate is
+created.

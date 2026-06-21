@@ -272,6 +272,15 @@ Before any future provider execution, the readiness layer in
 must be reviewed. It freezes the exact synthetic crop inputs and keeps
 execution blocked until Issue #64 receives explicit GO.
 
+## Execution Result 001
+
+The first execution attempt stopped after one provider call because the provider
+returned an output whose dimensions did not match the crop box:
+[`docs/experiments/reports/crop_only_provider_execution_001.md`](reports/crop_only_provider_execution_001.md).
+
+Retry remains blocked pending the dimension strategy gate:
+[`docs/experiments/crop_only_output_dimension_strategy_001.md`](crop_only_output_dimension_strategy_001.md).
+
 ## Decision Labels
 
 Allowed decision labels after future execution:
