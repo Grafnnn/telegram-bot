@@ -249,6 +249,11 @@ The next provider-facing test should prefer sending only the garment crop/edit
 surface where possible, then compositing the result back locally, instead of
 asking the provider to edit the full person/scene.
 
+The first crop-only provider packet proposal is documented in
+[`docs/experiments/crop_only_provider_execution_packet_001.md`](experiments/crop_only_provider_execution_packet_001.md).
+It remains proposal-only: it does not approve provider/OpenAI calls, runtime
+changes, staging/prod changes, or user-facing rollout.
+
 ## Open Questions
 
 - Which segmentation source should be used for the first real provider crop

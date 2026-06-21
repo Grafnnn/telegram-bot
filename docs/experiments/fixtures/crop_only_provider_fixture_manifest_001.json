@@ -1,0 +1,61 @@
+{
+  "experiment_id": "crop-only-provider-001",
+  "status": "packet_proposal_only",
+  "source_rehearsal": "crop-composite-offline-001",
+  "provider_calls_authorized": false,
+  "execution_approved": false,
+  "provider_openai_called": false,
+  "runtime_behavior_changed": false,
+  "user_facing_rollout_approved": false,
+  "call_cap": {
+    "expected_provider_calls": 2,
+    "max_allowed_provider_calls": 3,
+    "retry_policy": "at_most_1_total_transient_retry_only_after_explicit_execution_approval"
+  },
+  "thresholds": {
+    "max_mean_delta": 1.0,
+    "max_changed_pixel_percent": 1.0,
+    "pixel_delta_threshold": 8
+  },
+  "fixtures": [
+    {
+      "fixture_id": "pm001-solid-frontal",
+      "source_image": "docs/experiments/assets/provider-mask-001/pm001-solid-frontal-source.png",
+      "full_mask_image": "docs/experiments/assets/provider-mask-001/pm001-solid-frontal-mask.png",
+      "fabric_image": "docs/experiments/assets/provider-mask-001/pm001-solid-frontal-fabric.png",
+      "crop_source": "docs/experiments/assets/crop-composite-001/pm001-solid-frontal/crop_source.png",
+      "crop_mask": "docs/experiments/assets/crop-composite-001/pm001-solid-frontal/crop_mask.png",
+      "offline_fake_crop_edit": "docs/experiments/assets/crop-composite-001/pm001-solid-frontal/fake_crop_edit.png",
+      "offline_composite_output": "docs/experiments/assets/crop-composite-001/pm001-solid-frontal/composite_output.png",
+      "crop_bounds": {
+        "left": 52,
+        "top": 58,
+        "right": 109,
+        "bottom": 163
+      },
+      "crop_padding_pixels": 8,
+      "expected_provider_input": "crop_source_plus_crop_mask_plus_fabric_image",
+      "full_scene_provider_input_allowed": false
+    },
+    {
+      "fixture_id": "pm001-pattern-boundary",
+      "source_image": "docs/experiments/assets/provider-mask-001/pm001-pattern-boundary-source.png",
+      "full_mask_image": "docs/experiments/assets/provider-mask-001/pm001-pattern-boundary-mask.png",
+      "fabric_image": "docs/experiments/assets/provider-mask-001/pm001-pattern-boundary-fabric.png",
+      "crop_source": "docs/experiments/assets/crop-composite-001/pm001-pattern-boundary/crop_source.png",
+      "crop_mask": "docs/experiments/assets/crop-composite-001/pm001-pattern-boundary/crop_mask.png",
+      "offline_fake_crop_edit": "docs/experiments/assets/crop-composite-001/pm001-pattern-boundary/fake_crop_edit.png",
+      "offline_composite_output": "docs/experiments/assets/crop-composite-001/pm001-pattern-boundary/composite_output.png",
+      "crop_bounds": {
+        "left": 43,
+        "top": 59,
+        "right": 118,
+        "bottom": 125
+      },
+      "crop_padding_pixels": 8,
+      "expected_provider_input": "crop_source_plus_crop_mask_plus_fabric_image",
+      "full_scene_provider_input_allowed": false
+    }
+  ],
+  "required_decision_before_execution": "separate_explicit_go_required"
+}

@@ -301,6 +301,12 @@ For recurring pre-merge or post-deploy usage, follow
 That runbook defines when to run the route-level smoke, local/staging preflight,
 expected app-level mutations, pass/fail criteria, and log review requirements.
 
+For the crop/composite provider strategy, the first crop-only provider packet
+proposal lives in
+[`docs/experiments/crop_only_provider_execution_packet_001.md`](experiments/crop_only_provider_execution_packet_001.md).
+It is intentionally proposal-only and does not approve provider/OpenAI
+execution.
+
 ## Safety Boundaries
 
 This workflow must stay developer/tooling-only until a separate product decision
