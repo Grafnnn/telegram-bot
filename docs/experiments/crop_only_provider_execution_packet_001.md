@@ -26,6 +26,12 @@ Prerequisite offline rehearsal:
 Fixture manifest:
 [`docs/experiments/fixtures/crop_only_provider_fixture_manifest_001.json`](fixtures/crop_only_provider_fixture_manifest_001.json)
 
+Readiness gate:
+[`docs/experiments/crop_only_provider_readiness_001.md`](crop_only_provider_readiness_001.md)
+
+Frozen input manifest:
+[`docs/experiments/fixtures/crop_only_provider_frozen_inputs_001.json`](fixtures/crop_only_provider_frozen_inputs_001.json)
+
 Baseline: `main@2e9778cdfb4530bf6f913fbba8d3b6de7a861390`
 
 Target environment: `local/dev` only by default
@@ -251,12 +257,20 @@ Safe validation commands:
 
 ```bash
 python3 scripts/validate_crop_only_provider_packet.py
+python3 scripts/validate_crop_only_provider_readiness.py
 python3 -m pytest backend/tests/test_crop_only_provider_packet.py -q
 ```
 
 Future provider execution command: TBD in a separate execution gate after
 approval. This packet intentionally does not include a runnable provider
 command.
+
+## Readiness Gate
+
+Before any future provider execution, the readiness layer in
+[`docs/experiments/crop_only_provider_readiness_001.md`](crop_only_provider_readiness_001.md)
+must be reviewed. It freezes the exact synthetic crop inputs and keeps
+execution blocked until Issue #64 receives explicit GO.
 
 ## Decision Labels
 

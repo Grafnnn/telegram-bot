@@ -66,3 +66,9 @@ Packet proposal:
 That packet is not execution approval. Provider/OpenAI remains NO-GO until a
 separate explicit approval gate confirms target, provider/model/config, call
 cap, cost/risk, artifact handling, and stop conditions.
+
+Readiness gate:
+[`docs/experiments/crop_only_provider_readiness_001.md`](../crop_only_provider_readiness_001.md).
+
+The readiness gate freezes the crop inputs, but still does not approve
+provider/OpenAI execution.

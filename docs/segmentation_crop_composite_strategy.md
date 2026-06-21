@@ -254,6 +254,11 @@ The first crop-only provider packet proposal is documented in
 It remains proposal-only: it does not approve provider/OpenAI calls, runtime
 changes, staging/prod changes, or user-facing rollout.
 
+The pre-execution readiness gate is documented in
+[`docs/experiments/crop_only_provider_readiness_001.md`](experiments/crop_only_provider_readiness_001.md).
+It freezes the crop-only inputs and keeps provider execution blocked until
+Issue #64 receives explicit GO.
+
 ## Open Questions
 
 - Which segmentation source should be used for the first real provider crop
