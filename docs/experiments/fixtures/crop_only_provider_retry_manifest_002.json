@@ -1,0 +1,68 @@
+{
+  "manifest_id": "crop-only-provider-retry-002",
+  "status": "retry_packet_proposal_only",
+  "issue_gate": 66,
+  "baseline_commit": "ec4c2f53a0c846dd62881bc8dab251e0e92cc5fd",
+  "provider_openai_calls_allowed": false,
+  "user_facing_rollout_allowed": false,
+  "runtime_enablement_allowed": false,
+  "provider": "OpenAI",
+  "model": "gpt-image-1",
+  "endpoint": "/v1/images/edits",
+  "expected_provider_calls": 2,
+  "max_provider_calls": 3,
+  "retry_policy": "max_1_retry_total_only_for_transient_provider_failure_after_explicit_go",
+  "dimension_strategy": {
+    "name": "center_crop_to_crop_aspect_then_resize",
+    "offline_rehearsal": "docs/experiments/reports/crop_only_dimension_reconciliation_001.json",
+    "provider_output_dimensions_must_be_checked": true,
+    "implicit_resize_allowed": false,
+    "reconciliation_required_before_composite": true
+  },
+  "fixtures": [
+    {
+      "fixture_id": "pm001-solid-frontal",
+      "crop_source": "docs/experiments/assets/crop-composite-001/pm001-solid-frontal/crop_source.png",
+      "crop_mask": "docs/experiments/assets/crop-composite-001/pm001-solid-frontal/crop_mask.png",
+      "fabric_reference": "docs/experiments/assets/provider-mask-001/pm001-solid-frontal-fabric.png",
+      "source_image": "docs/experiments/assets/provider-mask-001/pm001-solid-frontal-source.png",
+      "full_mask": "docs/experiments/assets/provider-mask-001/pm001-solid-frontal-mask.png",
+      "crop_bounds": {
+        "left": 52,
+        "top": 58,
+        "right": 109,
+        "bottom": 163
+      },
+      "expected_crop_dimensions": {
+        "width": 57,
+        "height": 105
+      },
+      "expected_provider_input": "crop_source + crop_mask + fabric_reference only",
+      "expected_reconciliation": "center-crop provider output to crop aspect, then resize to expected crop dimensions",
+      "expected_composite_step": "local composite back into source",
+      "expected_preservation_check": "full-image protected-region preservation after composite"
+    },
+    {
+      "fixture_id": "pm001-pattern-boundary",
+      "crop_source": "docs/experiments/assets/crop-composite-001/pm001-pattern-boundary/crop_source.png",
+      "crop_mask": "docs/experiments/assets/crop-composite-001/pm001-pattern-boundary/crop_mask.png",
+      "fabric_reference": "docs/experiments/assets/provider-mask-001/pm001-pattern-boundary-fabric.png",
+      "source_image": "docs/experiments/assets/provider-mask-001/pm001-pattern-boundary-source.png",
+      "full_mask": "docs/experiments/assets/provider-mask-001/pm001-pattern-boundary-mask.png",
+      "crop_bounds": {
+        "left": 43,
+        "top": 59,
+        "right": 118,
+        "bottom": 125
+      },
+      "expected_crop_dimensions": {
+        "width": 75,
+        "height": 66
+      },
+      "expected_provider_input": "crop_source + crop_mask + fabric_reference only",
+      "expected_reconciliation": "center-crop provider output to crop aspect, then resize to expected crop dimensions",
+      "expected_composite_step": "local composite back into source",
+      "expected_preservation_check": "full-image protected-region preservation after composite"
+    }
+  ]
+}

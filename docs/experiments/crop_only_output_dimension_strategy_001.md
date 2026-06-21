@@ -77,6 +77,16 @@ Report:
 This rehearsal validates geometry and preservation mechanics only. It does not
 approve provider retry, runtime implementation, or user-facing rollout.
 
+## Retry Packet Proposal
+
+A retry packet proposal has been prepared for review:
+[`docs/experiments/crop_only_provider_retry_packet_002.md`](crop_only_provider_retry_packet_002.md)
+
+That packet keeps provider/OpenAI calls blocked until Issue #66 receives a
+separate explicit GO. It records the fixture list, call cap, artifact policy,
+stop conditions, and the approved dimension reconciliation strategy for a
+possible future retry.
+
 ## Requirements Before Any Retry
 
 - Issue #64 or follow-up issue records a new explicit GO.
