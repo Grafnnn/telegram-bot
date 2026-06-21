@@ -65,6 +65,18 @@ First add an offline-only rehearsal for dimension reconciliation:
 6. Manually review fabric scale and boundary distortion.
 7. Only then decide whether a retry packet is justified.
 
+Offline rehearsal 001 has been added for the candidate strategy:
+
+```text
+center-crop provider output to target crop aspect -> resize to crop dimensions
+```
+
+Report:
+[`docs/experiments/reports/crop_only_dimension_reconciliation_001.md`](reports/crop_only_dimension_reconciliation_001.md)
+
+This rehearsal validates geometry and preservation mechanics only. It does not
+approve provider retry, runtime implementation, or user-facing rollout.
+
 ## Requirements Before Any Retry
 
 - Issue #64 or follow-up issue records a new explicit GO.

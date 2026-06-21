@@ -1,0 +1,97 @@
+{
+  "rehearsal_id": "crop-only-dimension-reconciliation-001",
+  "status": "offline_rehearsal_passed",
+  "strategy": "center_crop_to_crop_aspect_then_resize",
+  "provider_openai_called": false,
+  "provider_retry_authorized": false,
+  "runtime_behavior_changed": false,
+  "user_facing_rollout_approved": false,
+  "source_execution_report": "docs/experiments/reports/crop_only_provider_execution_001.json",
+  "frozen_inputs_manifest": "docs/experiments/fixtures/crop_only_provider_frozen_inputs_001.json",
+  "simulated_provider_output_size": {
+    "width": 1024,
+    "height": 1536
+  },
+  "thresholds": {
+    "max_mean_delta": 1.0,
+    "max_changed_pixel_percent": 1.0,
+    "pixel_delta_threshold": 8
+  },
+  "fixtures": [
+    {
+      "fixture_id": "pm001-solid-frontal",
+      "source_image": "docs/experiments/assets/provider-mask-001/pm001-solid-frontal-source.png",
+      "full_mask": "docs/experiments/assets/provider-mask-001/pm001-solid-frontal-mask.png",
+      "crop_source": "docs/experiments/assets/crop-composite-001/pm001-solid-frontal/crop_source.png",
+      "crop_mask": "docs/experiments/assets/crop-composite-001/pm001-solid-frontal/crop_mask.png",
+      "fabric_reference": "docs/experiments/assets/provider-mask-001/pm001-solid-frontal-fabric.png",
+      "crop_bounds": {
+        "left": 52,
+        "top": 58,
+        "right": 109,
+        "bottom": 163
+      },
+      "crop_source_dimensions": {
+        "width": 57,
+        "height": 105
+      },
+      "oversized_provider_output_dimensions": {
+        "width": 1024,
+        "height": 1536
+      },
+      "reconciled_crop_dimensions": {
+        "width": 57,
+        "height": 105
+      },
+      "strategy": "center_crop_to_crop_aspect_then_resize",
+      "fake_oversized_provider_output": "docs/experiments/assets/crop-only-dimension-001/pm001-solid-frontal/fake_oversized_provider_output.png",
+      "reconciled_crop": "docs/experiments/assets/crop-only-dimension-001/pm001-solid-frontal/reconciled_crop.png",
+      "composite_output": "docs/experiments/assets/crop-only-dimension-001/pm001-solid-frontal/composite_output.png",
+      "mean_delta_protected_region": 0.0,
+      "changed_pixel_percent_protected_region": 0.0,
+      "max_delta_protected_region": 0,
+      "protected_pixel_count": 28495,
+      "editable_pixel_count": 3505,
+      "protected_region_drift": false,
+      "pass_fail": "pass"
+    },
+    {
+      "fixture_id": "pm001-pattern-boundary",
+      "source_image": "docs/experiments/assets/provider-mask-001/pm001-pattern-boundary-source.png",
+      "full_mask": "docs/experiments/assets/provider-mask-001/pm001-pattern-boundary-mask.png",
+      "crop_source": "docs/experiments/assets/crop-composite-001/pm001-pattern-boundary/crop_source.png",
+      "crop_mask": "docs/experiments/assets/crop-composite-001/pm001-pattern-boundary/crop_mask.png",
+      "fabric_reference": "docs/experiments/assets/provider-mask-001/pm001-pattern-boundary-fabric.png",
+      "crop_bounds": {
+        "left": 43,
+        "top": 59,
+        "right": 118,
+        "bottom": 125
+      },
+      "crop_source_dimensions": {
+        "width": 75,
+        "height": 66
+      },
+      "oversized_provider_output_dimensions": {
+        "width": 1024,
+        "height": 1536
+      },
+      "reconciled_crop_dimensions": {
+        "width": 75,
+        "height": 66
+      },
+      "strategy": "center_crop_to_crop_aspect_then_resize",
+      "fake_oversized_provider_output": "docs/experiments/assets/crop-only-dimension-001/pm001-pattern-boundary/fake_oversized_provider_output.png",
+      "reconciled_crop": "docs/experiments/assets/crop-only-dimension-001/pm001-pattern-boundary/reconciled_crop.png",
+      "composite_output": "docs/experiments/assets/crop-only-dimension-001/pm001-pattern-boundary/composite_output.png",
+      "mean_delta_protected_region": 0.0,
+      "changed_pixel_percent_protected_region": 0.0,
+      "max_delta_protected_region": 0,
+      "protected_pixel_count": 29774,
+      "editable_pixel_count": 2226,
+      "protected_region_drift": false,
+      "pass_fail": "pass"
+    }
+  ],
+  "decision": "READY_FOR_RETRY_PACKET_DESIGN_ONLY"
+}
