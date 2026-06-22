@@ -228,7 +228,10 @@ def test_user_photo_generation_telegram_request_generates_mask_when_strict(
     ) -> bytes:
         captured["mask_image_path"] = mask_image_path
         captured["prompt"] = prompt
+        with Image.open(user_photo_path) as provider_input:
+            captured["provider_input_size"] = f"{provider_input.width}x{provider_input.height}"
         assert mask_image_path is not None
+        captured["mask_exists_during_call"] = str(Path(mask_image_path).exists())
         return _provider_output_changing_only_mask(user_photo_path, mask_image_path)
 
     monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
@@ -247,9 +250,12 @@ def test_user_photo_generation_telegram_request_generates_mask_when_strict(
     assert payload["status"] == "completed"
     assert payload["mask_image_url"].startswith("/uploads/user-photo-masks/")
     assert captured["mask_image_path"]
-    assert Path(captured["mask_image_path"] or "").exists()
+    assert captured["mask_exists_during_call"] == "True"
+    assert captured["provider_input_size"] != "300x300"
     assert "A clothing edit mask is provided" in (captured["prompt"] or "")
     assert payload["result_image_url"].startswith("/uploads/generations/")
+    with Image.open(get_settings().upload_dir / payload["result_image_url"].removeprefix("/uploads/")) as result_image:
+        assert result_image.size == (300, 300)
 
     admin_response = client.get("/api/admin/generations?status=completed", headers=_admin_headers(client))
     assert admin_response.status_code == 200, admin_response.text
