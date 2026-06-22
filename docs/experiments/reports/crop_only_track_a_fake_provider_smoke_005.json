@@ -1,0 +1,34 @@
+{
+  "baseline": "main@6d9bb354a456e8bffccf5d49f8bf3610b8260dbd",
+  "decision": "TRACK_A_FAKE_PROVIDER_ROUTE_SMOKE_READY",
+  "endpoint": "/api/internal/crop-only/operator-review/track-a-smoke",
+  "experiment_id": "crop-only-track-a-fake-provider-smoke-005",
+  "fixture_count": 4,
+  "fixture_ids": [
+    "pm001-solid-frontal",
+    "pm001-pattern-boundary",
+    "pm003-large-pattern-scale",
+    "pm004-edge-boundary-stress"
+  ],
+  "imports_sql_direct_db_writes": false,
+  "issue_comment": 4769038426,
+  "local_route_level_attempt": {
+    "executed": false,
+    "reason": "local FastAPI dependency unavailable",
+    "route_behavior_covered_by": "PR #75 CI route tests"
+  },
+  "network_provider_invoked": false,
+  "openai_provider_calls": 0,
+  "raw_provider_payloads_committed": false,
+  "real_user_photos_used": false,
+  "route_endpoint_requires_bot_token": true,
+  "route_endpoint_requires_feature_flag": true,
+  "route_level_status": "covered_by_ci_pr_75_not_executed_locally_due_missing_fastapi_dependency",
+  "runtime_bot_admin_user_facing_enabled": false,
+  "secret_or_raw_payload_exposure": false,
+  "service_level_status": "pass",
+  "staging_prod_env_touched": false,
+  "target": "local/dev service-level smoke",
+  "track_b_controlled_provider_execution": false,
+  "user_facing_rollout_approved": false
+}
