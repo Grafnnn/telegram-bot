@@ -1,0 +1,68 @@
+{
+  "manifest_id": "crop-only-track-b-provider-failure-diagnostic-packet-010",
+  "status": "provider_failure_diagnostic_packet_not_approved_for_provider_execution",
+  "baseline_commit": "0a4b1d9d97f19458078b98493042606a6b298b70",
+  "parent_remaining_fixtures_report": "docs/experiments/reports/crop_only_track_b_remaining_fixtures_009.json",
+  "parent_remaining_fixtures_decision_required": "HOLD_REMAINING_FIXTURES_REVIEW",
+  "parent_stop_condition_required": "provider_call_failed:ImageGenerationProviderError",
+  "provider_openai_calls_allowed": false,
+  "controlled_provider_execution_allowed": false,
+  "staging_prod_env_allowed": false,
+  "runtime_enablement_allowed": false,
+  "telegram_bot_enablement_allowed": false,
+  "admin_user_facing_enablement_allowed": false,
+  "user_facing_rollout_allowed": false,
+  "visual_quality_approval_allowed": false,
+  "real_user_photos_allowed": false,
+  "imports_sql_direct_db_writes_allowed": false,
+  "experiment_id": "crop-only-track-b-provider-failure-diagnostic-010",
+  "future_zero_call_target": "local/dev provider failure diagnostics",
+  "diagnostic_provider_calls_allowed": false,
+  "diagnostic_network_calls_allowed": false,
+  "required_fixture_manifest": "docs/experiments/fixtures/crop_only_visual_quality_expansion_manifest_003.json",
+  "diagnostic_fixture_ids": [
+    "pm001-pattern-boundary",
+    "pm003-large-pattern-scale",
+    "pm004-edge-boundary-stress"
+  ],
+  "future_retry_candidate_after_separate_go": {
+    "target": "local/dev",
+    "fixture_ids": [
+      "pm001-pattern-boundary"
+    ],
+    "expected_provider_generations": 1,
+    "max_provider_http_requests": 1,
+    "retry_count": 0,
+    "input_scope": "crop_source + crop_mask + fabric_reference only",
+    "full_scene_person_input_allowed": false
+  },
+  "required_zero_call_checks": [
+    "parent_report_validated",
+    "fixture_paths_exist",
+    "crop_source_opens_as_image",
+    "crop_mask_opens_as_png_with_alpha",
+    "crop_mask_has_editable_transparent_region",
+    "crop_mask_has_protected_opaque_region",
+    "crop_source_and_mask_dimensions_match",
+    "fabric_reference_opens_as_image",
+    "fabric_reference_non_empty",
+    "sanitized_request_shape_built",
+    "openai_config_readiness_status_only",
+    "full_scene_provider_input_absent"
+  ],
+  "required_stop_conditions": [
+    "zero_call_diagnostics_missing",
+    "request_shape_would_expose_secret_or_raw_payload",
+    "fixture_asset_missing_or_unreadable",
+    "crop_source_mask_dimension_mismatch",
+    "crop_mask_missing_editable_region",
+    "crop_mask_missing_protected_region",
+    "fabric_reference_missing_unreadable_or_empty",
+    "full_scene_person_input_selected",
+    "no_mask_prompt_only_path_selected",
+    "provider_model_config_unknown",
+    "call_cap_would_be_exceeded",
+    "retry_without_new_explicit_gate",
+    "staging_production_real_user_photo_imports_sql_or_direct_db_writes_involved"
+  ]
+}
