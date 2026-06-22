@@ -1,0 +1,84 @@
+{
+  "manifest_id": "crop-only-staging-operator-review-004",
+  "status": "proposal_only_not_approved_for_execution",
+  "baseline_commit": "fd51411d8e001dd2d3a3e44d59b1afb6bc4e6add",
+  "parent_evidence": "docs/experiments/reports/crop_only_visual_quality_expansion_003.json",
+  "parent_decision_required": "GO_FOR_MORE_CROP_ONLY_TESTING",
+  "provider_openai_calls_allowed": false,
+  "fake_provider_execution_allowed": false,
+  "controlled_provider_execution_allowed": false,
+  "user_facing_rollout_allowed": false,
+  "runtime_enablement_allowed": false,
+  "staging_prod_env_allowed": false,
+  "telegram_bot_enablement_allowed": false,
+  "admin_user_facing_enablement_allowed": false,
+  "real_user_photos_allowed": false,
+  "imports_sql_direct_db_writes_allowed": false,
+  "experiment_id": "crop-only-staging-operator-review-004",
+  "default_target": "local/dev documentation and validation only",
+  "future_target_after_explicit_go": "operator-only staging integration smoke",
+  "input_scope": "crop_source + crop_mask + fabric_reference only",
+  "full_scene_person_input_allowed": false,
+  "tracks": [
+    {
+      "track_id": "track_a_fake_provider_staging_route_smoke",
+      "status": "not_approved_requires_fresh_explicit_go",
+      "purpose": "exercise routing, artifact handling, composite, preservation, and operator review metadata without real provider calls",
+      "provider_openai_calls": 0,
+      "max_app_smoke_requests": 10,
+      "provider": "fake_provider_only",
+      "provider_model": "none",
+      "output_source": "deterministic local synthetic crop output or fixture copy",
+      "requires_provider_secrets": false
+    },
+    {
+      "track_id": "track_b_controlled_provider_operator_review",
+      "status": "not_approved_requires_fresh_explicit_go_after_track_a_passes",
+      "purpose": "repeat small crop-only provider run through operator review workflow",
+      "provider": "OpenAI",
+      "provider_model": "gpt-image-1",
+      "endpoint": "/v1/images/edits",
+      "expected_provider_generations": 4,
+      "max_provider_http_requests": 5,
+      "retry_policy": "max_1_total_retry_only_for_transient_provider_failure_after_explicit_go",
+      "requires_provider_secrets": true
+    }
+  ],
+  "required_fixture_manifest": "docs/experiments/fixtures/crop_only_visual_quality_expansion_manifest_003.json",
+  "fixture_ids": [
+    "pm001-solid-frontal",
+    "pm001-pattern-boundary",
+    "pm003-large-pattern-scale",
+    "pm004-edge-boundary-stress"
+  ],
+  "preservation_thresholds": {
+    "max_mean_delta": 1.0,
+    "max_changed_pixel_percent": 1.0,
+    "pixel_delta_threshold": 8
+  },
+  "visual_operator_review_thresholds": {
+    "minimum_average_score": 4.0,
+    "minimum_dimension_score": 4,
+    "operator_review_required": true,
+    "rollout_approval_from_this_packet": false
+  },
+  "required_stop_conditions": [
+    "explicit_go_missing",
+    "ambiguous_track",
+    "fixture_assets_missing",
+    "provider_model_config_unknown_for_track_b",
+    "call_cap_would_be_exceeded",
+    "full_scene_person_input_selected",
+    "mask_missing_invalid_or_empty",
+    "no_mask_prompt_only_path_selected",
+    "output_not_tied_to_fixture_id",
+    "output_dimensions_unreadable",
+    "dimension_reconciliation_missing",
+    "local_composite_failed",
+    "preservation_report_missing_or_failing",
+    "visual_operator_review_missing_or_failing",
+    "protected_region_drift_observed",
+    "secret_base64_raw_payload_exposure_risk",
+    "production_public_rollout_real_user_photo_imports_sql_or_direct_db_writes_involved"
+  ]
+}

@@ -264,6 +264,16 @@ mismatch. The follow-up strategy gate is documented in
 [`docs/experiments/crop_only_output_dimension_strategy_001.md`](experiments/crop_only_output_dimension_strategy_001.md).
 No retry is approved until that dimension strategy is resolved.
 
+The current positive synthetic visual-quality evidence is recorded in
+[`docs/experiments/reports/crop_only_visual_quality_expansion_003.md`](experiments/reports/crop_only_visual_quality_expansion_003.md).
+It supports only more controlled crop-only testing, not rollout.
+
+The next proposed operator-only staging integration gate is documented in
+[`docs/experiments/crop_only_staging_operator_review_packet_004.md`](experiments/crop_only_staging_operator_review_packet_004.md).
+It remains proposal-only and does not approve fake-provider execution,
+controlled-provider execution, staging changes, runtime changes, or user-facing
+rollout.
+
 ## Open Questions
 
 - Which segmentation source should be used for the first real provider crop
