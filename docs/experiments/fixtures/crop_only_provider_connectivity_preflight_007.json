@@ -1,0 +1,53 @@
+{
+  "manifest_id": "crop-only-provider-connectivity-preflight-007",
+  "status": "proposal_only_not_approved_for_provider_execution",
+  "baseline_commit": "9dfed6ee88e257691e0bcc1fb76578df97cea165",
+  "parent_track_b_report": "docs/experiments/reports/crop_only_track_b_operator_review_006.json",
+  "parent_decision_required": "HOLD_TRACK_B_OPERATOR_REVIEW",
+  "observed_track_b_stop_condition": "provider_call_failed:URLError",
+  "observed_bot_user_message": "AI-визуализация пока недоступна. Попробуйте еще раз чуть позже.",
+  "preflight_surface": "GET /api/internal/ai-readiness/image-generation",
+  "preflight_surface_requires_bot_token": true,
+  "preflight_surface_provider_called": false,
+  "provider_openai_calls_allowed": false,
+  "provider_http_requests_allowed": 0,
+  "controlled_provider_execution_allowed": false,
+  "track_b_retry_allowed": false,
+  "staging_prod_env_allowed": false,
+  "runtime_user_facing_enablement_allowed": false,
+  "telegram_bot_rollout_allowed": false,
+  "admin_user_facing_enablement_allowed": false,
+  "user_facing_rollout_allowed": false,
+  "real_user_photos_allowed": false,
+  "imports_sql_direct_db_writes_allowed": false,
+  "secret_or_raw_payload_exposure_allowed": false,
+  "diagnostics_allowed": [
+    "openai_configured_boolean_only",
+    "provider_name",
+    "image_model_name",
+    "endpoint_name",
+    "mask_mode",
+    "preservation_check_enabled",
+    "provider_called_false",
+    "provider_http_requests_zero"
+  ],
+  "diagnostics_forbidden": [
+    "openai_api_key_value",
+    "bot_internal_token_value",
+    "telegram_bot_token_value",
+    "raw_provider_payload",
+    "base64_image_data",
+    "provider_output_bytes",
+    "real_user_photo"
+  ],
+  "next_track_b_retry_requires_fresh_explicit_go": true,
+  "required_stop_conditions": [
+    "preflight_surface_missing_or_unprotected",
+    "preflight_returns_secret_or_raw_payload",
+    "preflight_attempts_provider_call",
+    "preflight_provider_http_requests_nonzero",
+    "track_b_retry_attempted_without_fresh_go",
+    "staging_prod_env_or_user_facing_rollout_involved",
+    "real_user_photo_or_direct_db_write_involved"
+  ]
+}
