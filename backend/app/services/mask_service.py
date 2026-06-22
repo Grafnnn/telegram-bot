@@ -15,6 +15,10 @@ from app.services.storage_service import resolve_upload_path
 
 MASK_FOLDER = "user-photo-masks"
 EDITABLE_ALPHA_THRESHOLD = 128
+GENERATED_MASK_LEFT_RATIO = 0.34
+GENERATED_MASK_TOP_RATIO = 0.36
+GENERATED_MASK_RIGHT_RATIO = 0.66
+GENERATED_MASK_BOTTOM_RATIO = 0.68
 ALLOWED_MASK_MODES = {"off", "provided", "mock", "provider"}
 STRICT_MASK_REQUIRED_MESSAGE = "Для точной примерки нужна маска области одежды."
 MASK_PROVIDER_NOT_CONFIGURED_MESSAGE = "Clothing mask provider is not configured yet."
@@ -187,10 +191,10 @@ def save_mask_image(mask_bytes: bytes) -> str:
 def _mock_mask_bytes(base_image_path: Path) -> bytes:
     width, height = _load_base_size(base_image_path)
     mask = Image.new("RGBA", (width, height), color=(0, 0, 0, 255))
-    left = max(0, int(width * 0.25))
-    top = max(0, int(height * 0.25))
-    right = min(width, int(width * 0.75))
-    bottom = min(height, int(height * 0.85))
+    left = max(0, int(width * GENERATED_MASK_LEFT_RATIO))
+    top = max(0, int(height * GENERATED_MASK_TOP_RATIO))
+    right = min(width, int(width * GENERATED_MASK_RIGHT_RATIO))
+    bottom = min(height, int(height * GENERATED_MASK_BOTTOM_RATIO))
     ImageDraw.Draw(mask).rectangle((left, top, right, bottom), fill=(0, 0, 0, 0))
     buffer = BytesIO()
     mask.save(buffer, format="PNG")

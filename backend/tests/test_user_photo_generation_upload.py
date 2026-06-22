@@ -17,7 +17,11 @@ from app.models.fabric import Fabric
 from app.models.fabric_image import FabricImage
 from app.models.generation import Generation
 from app.models.telegram_user import TelegramUser
-from app.services.mask_service import MASK_PROVIDER_NOT_CONFIGURED_MESSAGE, STRICT_MASK_REQUIRED_MESSAGE
+from app.services.mask_service import (
+    MASK_PROVIDER_NOT_CONFIGURED_MESSAGE,
+    STRICT_MASK_REQUIRED_MESSAGE,
+    calculate_edit_coverage,
+)
 
 BOT_HEADERS = {"X-Bot-Token": "test_bot_internal_token"}
 WRONG_BOT_HEADERS = {"X-Bot-Token": "wrong"}
@@ -252,8 +256,13 @@ def test_user_photo_generation_telegram_request_generates_mask_when_strict(
     assert captured["mask_image_path"]
     assert captured["mask_exists_during_call"] == "True"
     assert captured["provider_input_size"] != "300x300"
+    crop_width, crop_height = [int(value) for value in (captured["provider_input_size"] or "").split("x")]
+    assert crop_width <= 150
+    assert crop_height <= 150
     assert "A clothing edit mask is provided" in (captured["prompt"] or "")
     assert payload["result_image_url"].startswith("/uploads/generations/")
+    persisted_mask_path = get_settings().upload_dir / payload["mask_image_url"].removeprefix("/uploads/")
+    assert calculate_edit_coverage(persisted_mask_path) == pytest.approx(10.45, abs=0.5)
     with Image.open(get_settings().upload_dir / payload["result_image_url"].removeprefix("/uploads/")) as result_image:
         assert result_image.size == (300, 300)
 
