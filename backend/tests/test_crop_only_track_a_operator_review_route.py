@@ -12,8 +12,11 @@ HEADERS = {"X-Bot-Token": "test_bot_internal_token"}
 def _post_track_a_smoke(monkeypatch, *, enabled: bool, headers: dict[str, str] | None = None):
     monkeypatch.setenv("CROP_ONLY_OPERATOR_REVIEW_TRACK_A_ENABLED", "true" if enabled else "false")
     get_settings.cache_clear()
-    with TestClient(app) as client:
-        return client.post(ENDPOINT, headers=headers or {})
+    try:
+        with TestClient(app) as client:
+            return client.post(ENDPOINT, headers=headers or {})
+    finally:
+        get_settings.cache_clear()
 
 
 def test_track_a_fake_provider_smoke_is_disabled_by_default(client) -> None:
