@@ -1,0 +1,172 @@
+{
+  "baseline": "main@b825d06a32b8301de2e462690f83265a89b4494e",
+  "checks": {
+    "crop_mask_has_editable_transparent_region": true,
+    "crop_mask_has_protected_opaque_region": true,
+    "crop_mask_opens_as_png_with_alpha": true,
+    "crop_source_and_mask_dimensions_match": true,
+    "crop_source_opens_as_image": true,
+    "fabric_reference_non_empty": true,
+    "fabric_reference_opens_as_image": true,
+    "fixture_paths_exist": true,
+    "full_scene_provider_input_absent": true,
+    "openai_config_readiness_status_only": true,
+    "parent_report_validated": true,
+    "sanitized_request_shape_built": true
+  },
+  "decision": "READY_FOR_ONE_FIXTURE_RETRY_PACKET_DESIGN",
+  "diagnostic_network_calls_allowed": false,
+  "diagnostic_provider_calls_allowed": false,
+  "experiment_id": "crop-only-track-b-provider-failure-diagnostic-010",
+  "failures": [],
+  "fixtures": [
+    {
+      "category": "pattern_boundary_baseline",
+      "crop_mask": {
+        "editable_percent": 44.96969696969697,
+        "editable_transparent_pixels": 2226,
+        "format": "PNG",
+        "has_alpha": true,
+        "has_editable_region": true,
+        "has_protected_region": true,
+        "height": 66,
+        "mode": "RGBA",
+        "protected_opaque_pixels": 2724,
+        "protected_percent": 55.03030303030303,
+        "width": 75
+      },
+      "crop_source": {
+        "format": "PNG",
+        "height": 66,
+        "mode": "RGB",
+        "non_empty": true,
+        "width": 75
+      },
+      "crop_source_mask_dimensions_match": true,
+      "fabric_reference": {
+        "format": "PNG",
+        "height": 64,
+        "mode": "RGB",
+        "non_empty": true,
+        "width": 64
+      },
+      "fixture_id": "pm001-pattern-boundary",
+      "request_shape": {
+        "base64_included": false,
+        "full_scene_provider_input_included": false,
+        "has_mask": true,
+        "image_count": 2,
+        "input_scope": "crop_source + crop_mask + fabric_reference only",
+        "raw_payload_included": false,
+        "secret_included": false
+      }
+    },
+    {
+      "category": "large_scale_pattern",
+      "crop_mask": {
+        "editable_percent": 76.70408981555734,
+        "editable_transparent_pixels": 7652,
+        "format": "PNG",
+        "has_alpha": true,
+        "has_editable_region": true,
+        "has_protected_region": true,
+        "height": 116,
+        "mode": "RGBA",
+        "protected_opaque_pixels": 2324,
+        "protected_percent": 23.29591018444266,
+        "width": 86
+      },
+      "crop_source": {
+        "format": "PNG",
+        "height": 116,
+        "mode": "RGB",
+        "non_empty": true,
+        "width": 86
+      },
+      "crop_source_mask_dimensions_match": true,
+      "fabric_reference": {
+        "format": "PNG",
+        "height": 96,
+        "mode": "RGB",
+        "non_empty": true,
+        "width": 96
+      },
+      "fixture_id": "pm003-large-pattern-scale",
+      "request_shape": {
+        "base64_included": false,
+        "full_scene_provider_input_included": false,
+        "has_mask": true,
+        "image_count": 2,
+        "input_scope": "crop_source + crop_mask + fabric_reference only",
+        "raw_payload_included": false,
+        "secret_included": false
+      }
+    },
+    {
+      "category": "edge_boundary_stress",
+      "crop_mask": {
+        "editable_percent": 65.96653613385547,
+        "editable_transparent_pixels": 7412,
+        "format": "PNG",
+        "has_alpha": true,
+        "has_editable_region": true,
+        "has_protected_region": true,
+        "height": 106,
+        "mode": "RGBA",
+        "protected_opaque_pixels": 3824,
+        "protected_percent": 34.03346386614454,
+        "width": 106
+      },
+      "crop_source": {
+        "format": "PNG",
+        "height": 106,
+        "mode": "RGB",
+        "non_empty": true,
+        "width": 106
+      },
+      "crop_source_mask_dimensions_match": true,
+      "fabric_reference": {
+        "format": "PNG",
+        "height": 80,
+        "mode": "RGB",
+        "non_empty": true,
+        "width": 80
+      },
+      "fixture_id": "pm004-edge-boundary-stress",
+      "request_shape": {
+        "base64_included": false,
+        "full_scene_provider_input_included": false,
+        "has_mask": true,
+        "image_count": 2,
+        "input_scope": "crop_source + crop_mask + fabric_reference only",
+        "raw_payload_included": false,
+        "secret_included": false
+      }
+    }
+  ],
+  "future_retry_candidate": {
+    "expected_provider_generations": 1,
+    "fixture_ids": [
+      "pm001-pattern-boundary"
+    ],
+    "full_scene_person_input_allowed": false,
+    "input_scope": "crop_source + crop_mask + fabric_reference only",
+    "max_provider_http_requests": 1,
+    "retry_count": 0,
+    "target": "local/dev"
+  },
+  "network_calls": 0,
+  "parent_report": "docs/experiments/reports/crop_only_track_b_remaining_fixtures_009.json",
+  "parent_stop_condition": "provider_call_failed:ImageGenerationProviderError",
+  "provider_openai_calls": 0,
+  "safety": {
+    "imports_sql_direct_db_writes": false,
+    "raw_image_bytes_or_base64_committed": false,
+    "real_user_photos_used": false,
+    "runtime_bot_admin_user_facing_enabled": false,
+    "secrets_or_raw_payloads_exposed": false,
+    "staging_prod_env_touched": false,
+    "user_facing_rollout_approved": false
+  },
+  "target": "local/dev provider failure diagnostics"
+}
