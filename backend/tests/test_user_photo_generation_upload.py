@@ -210,6 +210,55 @@ def test_user_photo_generation_default_requires_mask_before_provider(client: Tes
     assert admin_generation["error_message"] == STRICT_MASK_REQUIRED_MESSAGE
 
 
+def test_user_photo_generation_telegram_request_generates_mask_when_strict(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    telegram_id = _create_telegram_user()
+    captured: dict[str, str | None] = {}
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+    ) -> bytes:
+        captured["mask_image_path"] = mask_image_path
+        captured["prompt"] = prompt
+        assert mask_image_path is not None
+        return _provider_output_changing_only_mask(user_photo_path, mask_image_path)
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+
+    response = _post_user_photo(
+        client,
+        fabric_id,
+        PNG_300,
+        "image/png",
+        BOT_HEADERS,
+        telegram_id=telegram_id,
+    )
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["mask_image_url"].startswith("/uploads/user-photo-masks/")
+    assert captured["mask_image_path"]
+    assert Path(captured["mask_image_path"] or "").exists()
+    assert "A clothing edit mask is provided" in (captured["prompt"] or "")
+    assert payload["result_image_url"].startswith("/uploads/generations/")
+
+    admin_response = client.get("/api/admin/generations?status=completed", headers=_admin_headers(client))
+    assert admin_response.status_code == 200, admin_response.text
+    [admin_generation] = admin_response.json()["items"]
+    assert admin_generation["id"] == payload["id"]
+    assert admin_generation["telegram_user"]["telegram_id"] == telegram_id
+    assert admin_generation["mask_image_url"] == payload["mask_image_url"]
+
+
 def test_user_photo_generation_legacy_no_mask_mode_can_be_enabled_explicitly(
     client: TestClient,
     monkeypatch,

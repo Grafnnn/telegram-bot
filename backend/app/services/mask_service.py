@@ -202,18 +202,32 @@ def _mask_mode() -> str:
     return mode if mode in ALLOWED_MASK_MODES else "off"
 
 
-async def prepare_user_photo_mask(base_image_path: Path, provided_mask: UploadFile | None = None) -> MaskResult | None:
+async def prepare_user_photo_mask(
+    base_image_path: Path,
+    provided_mask: UploadFile | None = None,
+    *,
+    allow_generated_mask: bool = False,
+) -> MaskResult | None:
     """Prepare an optional edit mask according to USER_PHOTO_MASK_MODE."""
 
     mode = _mask_mode()
     settings = get_settings()
     if mode == "off":
-        if settings.user_photo_require_mask_for_strict_edit:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, STRICT_MASK_REQUIRED_MESSAGE)
-        return None
-    if mode == "provider":
+        if provided_mask is not None:
+            if (provided_mask.content_type or "").lower() != "image/png":
+                raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Mask must be a PNG image.")
+            mask_bytes = await provided_mask.read()
+            mode = "provided"
+        elif allow_generated_mask and settings.user_photo_require_mask_for_strict_edit:
+            mask_bytes = _mock_mask_bytes(base_image_path)
+            mode = "generated"
+        else:
+            if settings.user_photo_require_mask_for_strict_edit:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, STRICT_MASK_REQUIRED_MESSAGE)
+            return None
+    elif mode == "provider":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, MASK_PROVIDER_NOT_CONFIGURED_MESSAGE)
-    if mode == "provided":
+    elif mode == "provided":
         if provided_mask is None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, STRICT_MASK_REQUIRED_MESSAGE)
         if (provided_mask.content_type or "").lower() != "image/png":

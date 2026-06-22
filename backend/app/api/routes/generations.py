@@ -397,7 +397,11 @@ async def _create_user_photo_generation(
         photo_url = await save_upload(photo, "user-photos")
         generation.user_photo_url = photo_url
         photo_path, reference_path, reference_type = prepare_user_photo_edit_inputs(photo_url, fabric)
-        mask_result = await prepare_user_photo_mask(photo_path, mask)
+        mask_result = await prepare_user_photo_mask(
+            photo_path,
+            mask,
+            allow_generated_mask=telegram_id is not None,
+        )
         if mask_result is not None:
             generation.mask_image_url = mask_result.mask_image_url
             prompt = _build_user_photo_prompt(fabric, mask_used=True)
