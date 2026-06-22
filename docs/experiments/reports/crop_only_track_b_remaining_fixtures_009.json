@@ -1,0 +1,36 @@
+{
+  "actual_provider_http_requests": 2,
+  "baseline": "main@871656dee232d7b843354206ba08e6de257880b6",
+  "decision": "HOLD_REMAINING_FIXTURES_REVIEW",
+  "dimension_strategy": "center_crop_to_crop_aspect_then_resize",
+  "endpoint": "/v1/images/edits",
+  "excluded_fixture_ids": [
+    "pm001-solid-frontal"
+  ],
+  "experiment_id": "crop-only-track-b-remaining-fixtures-009",
+  "expected_provider_generations": 3,
+  "fixture_scope": [
+    "pm001-pattern-boundary",
+    "pm003-large-pattern-scale",
+    "pm004-edge-boundary-stress"
+  ],
+  "fixtures": [],
+  "full_scene_provider_input_used": false,
+  "imports_sql_direct_db_writes": false,
+  "input_scope": "crop_source + crop_mask + fabric_reference only",
+  "issue_go_comment": 4772776423,
+  "max_provider_http_requests": 4,
+  "model": "gpt-image-1",
+  "output_dir": "/tmp/crop-only-track-b-remaining-fixtures-009",
+  "provider": "OpenAI",
+  "provider_outputs_committed": false,
+  "raw_provider_payloads_committed": false,
+  "real_user_photos_used": false,
+  "retry_count": 1,
+  "runtime_bot_admin_user_facing_enabled": false,
+  "secret_or_raw_payload_exposure": false,
+  "staging_prod_env_touched": false,
+  "stop_condition": "provider_call_failed:ImageGenerationProviderError",
+  "target": "local/dev crop-only provider remaining fixtures",
+  "user_facing_rollout_approved": false
+}
