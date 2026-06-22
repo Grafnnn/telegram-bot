@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.routes import (
     admin_fabrics,
     admin_garment_styles,
+    ai_readiness,
     auth,
     bot_users,
     generations,
@@ -60,6 +61,7 @@ app.include_router(public_catalog.router, prefix="/api")
 app.include_router(bot_users.router, prefix="/api")
 app.include_router(generations.router, prefix="/api")
 app.include_router(operator_review.router, prefix="/api")
+app.include_router(ai_readiness.router, prefix="/api")
 app.include_router(uploads.router, prefix="/api")
 
 
