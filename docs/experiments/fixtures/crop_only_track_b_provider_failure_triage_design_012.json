@@ -1,0 +1,108 @@
+{
+  "baseline_commit": "805f97c2e24c542c7edd5b631a6356b7f9b7eb2a",
+  "blocked_request_shape": {
+    "dimension_strategy": "center_crop_to_crop_aspect_then_resize",
+    "endpoint": "/v1/images/edits",
+    "full_scene_person_input_used": false,
+    "input_scope": "crop_source + crop_mask + fabric_reference only",
+    "model": "gpt-image-1",
+    "provider": "OpenAI"
+  },
+  "controlled_provider_execution_allowed": false,
+  "decision": "REQUEST_SHAPE_BLOCKED_PENDING_ZERO_CALL_COMPATIBILITY_MATRIX",
+  "experiment_id": "crop-only-track-b-provider-failure-triage-design-012",
+  "future_provider_retry_allowed": false,
+  "imports_sql_direct_db_writes_allowed": false,
+  "manifest_id": "crop-only-track-b-provider-failure-triage-design-012",
+  "next_gate": {
+    "call_count": 0,
+    "gate_id": "request-shape-compatibility-matrix-012",
+    "provider_calls_allowed": false,
+    "required_fields": [
+      "sanitized_request_shape",
+      "full_scene_person_input_absent",
+      "mask_used",
+      "expected_preservation_risk",
+      "visual_fidelity_risk",
+      "future_provider_call_cap_if_selected",
+      "fresh_go_required_before_execution"
+    ],
+    "type": "zero_call_request_shape_compatibility_matrix"
+  },
+  "parent_evidence": [
+    {
+      "actual_provider_http_requests": 2,
+      "decision": "HOLD_REMAINING_FIXTURES_REVIEW",
+      "fixtures_completed": [],
+      "report": "docs/experiments/reports/crop_only_track_b_remaining_fixtures_009.json",
+      "retry_count": 1,
+      "stop_condition": "provider_call_failed:ImageGenerationProviderError"
+    },
+    {
+      "decision": "READY_FOR_ONE_FIXTURE_RETRY_PACKET_DESIGN",
+      "failures": [],
+      "network_calls": 0,
+      "provider_openai_calls": 0,
+      "report": "docs/experiments/reports/crop_only_track_b_provider_failure_diagnostic_010.json"
+    },
+    {
+      "actual_provider_http_requests": 1,
+      "decision": "HOLD_ONE_FIXTURE_RETRY",
+      "fixtures_completed": [],
+      "report": "docs/experiments/reports/crop_only_track_b_one_fixture_retry_011.json",
+      "retry_count": 0,
+      "stop_condition": "provider_call_failed:ImageGenerationProviderError"
+    }
+  ],
+  "provider_openai_calls_allowed": false,
+  "real_user_photos_allowed": false,
+  "repeated_failure_conclusion": "Repeated provider failure occurs on the current crop_source + crop_mask + fabric_reference request shape after local zero-call diagnostics passed.",
+  "request_shape_variants_to_compare_zero_call": [
+    {
+      "future_provider_call_cap_if_selected": 1,
+      "id": "A",
+      "mask_used": true,
+      "provider_calls_now": 0,
+      "shape": "current crop source + fabric reference + crop mask",
+      "summary": "baseline failed shape"
+    },
+    {
+      "future_provider_call_cap_if_selected": 1,
+      "id": "B",
+      "mask_used": true,
+      "provider_calls_now": 0,
+      "shape": "padded normalized crop source and mask + fabric reference",
+      "summary": "compatibility-oriented normalization"
+    },
+    {
+      "future_provider_call_cap_if_selected": 1,
+      "id": "C",
+      "mask_used": true,
+      "provider_calls_now": 0,
+      "shape": "crop source + crop mask, fabric described in prompt only",
+      "summary": "weaker fabric fidelity, still masked"
+    },
+    {
+      "future_provider_call_cap_if_selected": 1,
+      "id": "D",
+      "mask_used": false,
+      "provider_calls_now": 0,
+      "shape": "crop source + fabric reference without mask",
+      "summary": "diagnostic only, not rollout-safe"
+    },
+    {
+      "future_provider_call_cap_if_selected": 1,
+      "id": "E",
+      "mask_used": null,
+      "provider_calls_now": 0,
+      "shape": "alternate model/provider strategy",
+      "summary": "separate provider strategy comparison"
+    }
+  ],
+  "runtime_bot_admin_user_facing_allowed": false,
+  "same_shape_provider_retry_allowed": false,
+  "secret_or_raw_payload_exposure_allowed": false,
+  "staging_prod_env_allowed": false,
+  "status": "provider_failure_triage_design_not_approved_for_provider_execution",
+  "user_facing_rollout_allowed": false
+}
