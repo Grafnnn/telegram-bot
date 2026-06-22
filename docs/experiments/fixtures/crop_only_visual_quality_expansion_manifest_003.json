@@ -78,24 +78,40 @@
     {
       "fixture_id": "pm003-large-pattern-scale",
       "category": "large_scale_pattern",
-      "source_image": "TBD_SYNTHETIC_SOURCE",
-      "full_mask": "TBD_SYNTHETIC_FULL_MASK",
-      "crop_source": "TBD_SYNTHETIC_CROP_SOURCE",
-      "crop_mask": "TBD_SYNTHETIC_CROP_MASK",
-      "fabric_reference": "TBD_SYNTHETIC_FABRIC_REFERENCE",
-      "crop_bounds": "TBD",
-      "expected_crop_dimensions": "TBD"
+      "source_image": "docs/experiments/assets/crop-only-visual-quality-003/pm003-large-pattern-scale/source.png",
+      "full_mask": "docs/experiments/assets/crop-only-visual-quality-003/pm003-large-pattern-scale/full_mask.png",
+      "crop_source": "docs/experiments/assets/crop-only-visual-quality-003/pm003-large-pattern-scale/crop_source.png",
+      "crop_mask": "docs/experiments/assets/crop-only-visual-quality-003/pm003-large-pattern-scale/crop_mask.png",
+      "fabric_reference": "docs/experiments/assets/crop-only-visual-quality-003/pm003-large-pattern-scale/fabric_reference.png",
+      "crop_bounds": {
+        "left": 46,
+        "top": 58,
+        "right": 132,
+        "bottom": 174
+      },
+      "expected_crop_dimensions": {
+        "width": 86,
+        "height": 116
+      }
     },
     {
       "fixture_id": "pm004-edge-boundary-stress",
       "category": "edge_boundary_stress",
-      "source_image": "TBD_SYNTHETIC_SOURCE",
-      "full_mask": "TBD_SYNTHETIC_FULL_MASK",
-      "crop_source": "TBD_SYNTHETIC_CROP_SOURCE",
-      "crop_mask": "TBD_SYNTHETIC_CROP_MASK",
-      "fabric_reference": "TBD_SYNTHETIC_FABRIC_REFERENCE",
-      "crop_bounds": "TBD",
-      "expected_crop_dimensions": "TBD"
+      "source_image": "docs/experiments/assets/crop-only-visual-quality-003/pm004-edge-boundary-stress/source.png",
+      "full_mask": "docs/experiments/assets/crop-only-visual-quality-003/pm004-edge-boundary-stress/full_mask.png",
+      "crop_source": "docs/experiments/assets/crop-only-visual-quality-003/pm004-edge-boundary-stress/crop_source.png",
+      "crop_mask": "docs/experiments/assets/crop-only-visual-quality-003/pm004-edge-boundary-stress/crop_mask.png",
+      "fabric_reference": "docs/experiments/assets/crop-only-visual-quality-003/pm004-edge-boundary-stress/fabric_reference.png",
+      "crop_bounds": {
+        "left": 34,
+        "top": 52,
+        "right": 140,
+        "bottom": 158
+      },
+      "expected_crop_dimensions": {
+        "width": 106,
+        "height": 106
+      }
     }
   ]
 }

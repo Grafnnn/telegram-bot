@@ -59,6 +59,8 @@ def _safe_repo_path(reference: str) -> Path:
 
 
 def _validate_png(reference: str, expected_size: tuple[int, int] | None = None) -> tuple[int, int]:
+    if reference.startswith("TBD"):
+        raise AssertionError(f"Fixture reference must be concrete before execution packet review: {reference}")
     path = _safe_repo_path(reference)
     if not path.is_file():
         raise AssertionError(f"Referenced PNG does not exist: {reference}")
@@ -98,6 +100,13 @@ def _validate_concrete_fixture(entry: dict[str, Any]) -> None:
     _validate_png(entry["full_mask"])
     if crop_source_size != expected_size:
         raise AssertionError(f"{entry.get('fixture_id')} expected dimensions must match crop source.")
+    crop_bounds = entry.get("crop_bounds")
+    if not isinstance(crop_bounds, dict):
+        raise AssertionError(f"{entry.get('fixture_id')} crop bounds must be concrete.")
+    crop_width = crop_bounds["right"] - crop_bounds["left"]
+    crop_height = crop_bounds["bottom"] - crop_bounds["top"]
+    if (crop_width, crop_height) != expected_size:
+        raise AssertionError(f"{entry.get('fixture_id')} crop bounds must match expected dimensions.")
 
 
 def validate() -> None:
@@ -148,14 +157,8 @@ def validate() -> None:
     fixtures = manifest.get("fixtures")
     if not isinstance(fixtures, list) or [entry.get("fixture_id") for entry in fixtures] != EXPECTED_FIXTURE_IDS:
         raise AssertionError("Unexpected fixture ids or order.")
-    for entry in fixtures[:2]:
+    for entry in fixtures:
         _validate_concrete_fixture(entry)
-    for entry in fixtures[2:]:
-        for key in ["source_image", "full_mask", "crop_source", "crop_mask", "fabric_reference"]:
-            if not str(entry.get(key, "")).startswith("TBD_SYNTHETIC_"):
-                raise AssertionError(f"{entry.get('fixture_id')} must remain explicitly TBD before execution.")
-        if entry.get("crop_bounds") != "TBD" or entry.get("expected_crop_dimensions") != "TBD":
-            raise AssertionError(f"{entry.get('fixture_id')} bounds/dimensions must remain TBD before execution.")
 
     required_packet_text = [
         "Status: `PROPOSAL_ONLY / NOT APPROVED FOR EXECUTION`",
@@ -163,7 +166,8 @@ def validate() -> None:
         "Runtime/staging/prod/env changes: `BLOCKED`",
         "User-facing rollout: `BLOCKED`",
         "Any provider/OpenAI call without a fresh explicit GO is forbidden.",
-        "Before any execution, create or validate the two missing synthetic fixture",
+        "All fixture paths resolve to real synthetic PNG assets.",
+        "Before any execution, request a fresh explicit GO",
     ]
     missing = [phrase for phrase in required_packet_text if phrase not in packet]
     if missing:

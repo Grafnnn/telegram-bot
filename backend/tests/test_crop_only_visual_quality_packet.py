@@ -34,7 +34,7 @@ def test_crop_only_visual_quality_packet_is_not_execution_approval() -> None:
     assert "User-facing rollout: `BLOCKED`" in packet
 
 
-def test_crop_only_visual_quality_packet_keeps_expansion_fixtures_tbd() -> None:
+def test_crop_only_visual_quality_packet_has_concrete_synthetic_expansion_fixtures() -> None:
     manifest = json.loads(MANIFEST_JSON.read_text(encoding="utf-8"))
 
     assert manifest["expected_provider_generations"] == 4
@@ -45,7 +45,9 @@ def test_crop_only_visual_quality_packet_keeps_expansion_fixtures_tbd() -> None:
         "pm003-large-pattern-scale",
         "pm004-edge-boundary-stress",
     ]
-    for fixture in manifest["fixtures"][2:]:
-        assert fixture["crop_bounds"] == "TBD"
-        assert fixture["expected_crop_dimensions"] == "TBD"
-        assert fixture["source_image"].startswith("TBD_SYNTHETIC_")
+    for fixture in manifest["fixtures"]:
+        assert isinstance(fixture["crop_bounds"], dict)
+        assert isinstance(fixture["expected_crop_dimensions"], dict)
+        for key in ["source_image", "full_mask", "crop_source", "crop_mask", "fabric_reference"]:
+            assert fixture[key].endswith(".png")
+            assert not fixture[key].startswith("TBD")

@@ -83,8 +83,8 @@ Fixture categories:
 4. `edge_boundary_stress`
 
 The first two fixtures reuse the successful synthetic crop-only fixtures. The
-last two are intentionally `TBD` in this proposal and must be created as
-synthetic-only assets before execution can be approved.
+last two add deterministic synthetic coverage for large fabric scale and
+garment-boundary stress.
 
 ## Call Cap
 
@@ -99,7 +99,7 @@ Any provider/OpenAI call without a fresh explicit GO is forbidden.
 
 ## Required Preflight Before Any GO
 
-- All `TBD` fixture paths are replaced with real synthetic PNG assets.
+- All fixture paths resolve to real synthetic PNG assets.
 - Source and mask dimensions match for every fixture.
 - Crop source and crop mask dimensions match expected crop dimensions.
 - Mask has a non-empty editable clothing region and non-empty protected region.
@@ -209,7 +209,5 @@ This packet does not approve:
 
 ## Next Gate
 
-Before any execution, create or validate the two missing synthetic fixture
-categories and update the manifest so it contains only concrete local assets.
-Then request a fresh explicit GO with the exact call cap, output directory, and
-stop conditions.
+Before any execution, request a fresh explicit GO with the exact call cap,
+output directory, provider/model/config, artifact policy, and stop conditions.
