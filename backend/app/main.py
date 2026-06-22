@@ -9,7 +9,16 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import admin_fabrics, admin_garment_styles, auth, bot_users, generations, public_catalog, uploads
+from app.api.routes import (
+    admin_fabrics,
+    admin_garment_styles,
+    auth,
+    bot_users,
+    generations,
+    operator_review,
+    public_catalog,
+    uploads,
+)
 from app.config import get_settings
 from app.database import SessionLocal
 from app.schemas.common import HealthResponse
@@ -50,6 +59,7 @@ app.include_router(admin_garment_styles.router, prefix="/api")
 app.include_router(public_catalog.router, prefix="/api")
 app.include_router(bot_users.router, prefix="/api")
 app.include_router(generations.router, prefix="/api")
+app.include_router(operator_review.router, prefix="/api")
 app.include_router(uploads.router, prefix="/api")
 
 

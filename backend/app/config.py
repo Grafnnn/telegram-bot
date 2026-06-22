@@ -118,6 +118,8 @@ class Settings:
     user_photo_preservation_max_changed_pixel_percent: float = 1.0
     user_photo_preservation_pixel_delta_threshold: int = 8
 
+    crop_only_operator_review_track_a_enabled: bool = False
+
     upload_dir: Path = Path("/app/uploads")
     max_upload_size_mb: int = 10
     max_upload_bytes: int | None = None
@@ -207,6 +209,11 @@ class Settings:
             "user_photo_preservation_pixel_delta_threshold": _get_int(
                 "USER_PHOTO_PRESERVATION_PIXEL_DELTA_THRESHOLD",
                 cls.user_photo_preservation_pixel_delta_threshold,
+                env_file,
+            ),
+            "crop_only_operator_review_track_a_enabled": _get_bool(
+                "CROP_ONLY_OPERATOR_REVIEW_TRACK_A_ENABLED",
+                cls.crop_only_operator_review_track_a_enabled,
                 env_file,
             ),
             "upload_dir": Path(_get_value("UPLOAD_DIR", str(cls.upload_dir), env_file)),
