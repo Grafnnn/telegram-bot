@@ -78,3 +78,8 @@ Use this as positive technical evidence for crop-only mechanics.
 Any next provider/model/prompt expansion still needs a separate capped packet
 with explicit fixtures, call cap, safety boundaries, artifact policy, and stop
 conditions.
+
+A proposal-only visual-quality expansion packet is available at
+[`docs/experiments/crop_only_visual_quality_expansion_packet_003.md`](../crop_only_visual_quality_expansion_packet_003.md).
+It keeps provider/OpenAI execution blocked until the missing synthetic fixtures
+are created and a fresh explicit GO is recorded.

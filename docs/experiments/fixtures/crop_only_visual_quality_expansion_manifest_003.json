@@ -1,0 +1,101 @@
+{
+  "manifest_id": "crop-only-visual-quality-expansion-003",
+  "status": "proposal_only_not_approved_for_execution",
+  "baseline_commit": "520d73295e43942f0319aeb06062f6701b4bb1e4",
+  "parent_evidence": "docs/experiments/reports/crop_only_provider_retry_002.json",
+  "provider_openai_calls_allowed": false,
+  "user_facing_rollout_allowed": false,
+  "runtime_enablement_allowed": false,
+  "staging_prod_env_allowed": false,
+  "provider": "OpenAI",
+  "model": "gpt-image-1",
+  "endpoint": "/v1/images/edits",
+  "experiment_id": "crop-only-visual-quality-expansion-003",
+  "expected_provider_generations": 4,
+  "max_total_http_requests": 5,
+  "retry_policy": "max_1_total_retry_only_for_transient_provider_failure_after_explicit_go",
+  "dimension_strategy": {
+    "name": "center_crop_to_crop_aspect_then_resize",
+    "implicit_resize_allowed": false,
+    "reconciliation_required_before_composite": true
+  },
+  "visual_quality_thresholds": {
+    "minimum_average_score": 4.0,
+    "minimum_dimension_score": 4,
+    "required_reviewers": 1,
+    "rollout_approval_from_this_packet": false
+  },
+  "preservation_thresholds": {
+    "max_mean_delta": 1.0,
+    "max_changed_pixel_percent": 1.0,
+    "pixel_delta_threshold": 8
+  },
+  "fixture_categories": [
+    "solid_frontal_baseline",
+    "pattern_boundary_baseline",
+    "large_scale_pattern",
+    "edge_boundary_stress"
+  ],
+  "fixtures": [
+    {
+      "fixture_id": "pm001-solid-frontal",
+      "category": "solid_frontal_baseline",
+      "source_image": "docs/experiments/assets/provider-mask-001/pm001-solid-frontal-source.png",
+      "full_mask": "docs/experiments/assets/provider-mask-001/pm001-solid-frontal-mask.png",
+      "crop_source": "docs/experiments/assets/crop-composite-001/pm001-solid-frontal/crop_source.png",
+      "crop_mask": "docs/experiments/assets/crop-composite-001/pm001-solid-frontal/crop_mask.png",
+      "fabric_reference": "docs/experiments/assets/provider-mask-001/pm001-solid-frontal-fabric.png",
+      "crop_bounds": {
+        "left": 52,
+        "top": 58,
+        "right": 109,
+        "bottom": 163
+      },
+      "expected_crop_dimensions": {
+        "width": 57,
+        "height": 105
+      }
+    },
+    {
+      "fixture_id": "pm001-pattern-boundary",
+      "category": "pattern_boundary_baseline",
+      "source_image": "docs/experiments/assets/provider-mask-001/pm001-pattern-boundary-source.png",
+      "full_mask": "docs/experiments/assets/provider-mask-001/pm001-pattern-boundary-mask.png",
+      "crop_source": "docs/experiments/assets/crop-composite-001/pm001-pattern-boundary/crop_source.png",
+      "crop_mask": "docs/experiments/assets/crop-composite-001/pm001-pattern-boundary/crop_mask.png",
+      "fabric_reference": "docs/experiments/assets/provider-mask-001/pm001-pattern-boundary-fabric.png",
+      "crop_bounds": {
+        "left": 43,
+        "top": 59,
+        "right": 118,
+        "bottom": 125
+      },
+      "expected_crop_dimensions": {
+        "width": 75,
+        "height": 66
+      }
+    },
+    {
+      "fixture_id": "pm003-large-pattern-scale",
+      "category": "large_scale_pattern",
+      "source_image": "TBD_SYNTHETIC_SOURCE",
+      "full_mask": "TBD_SYNTHETIC_FULL_MASK",
+      "crop_source": "TBD_SYNTHETIC_CROP_SOURCE",
+      "crop_mask": "TBD_SYNTHETIC_CROP_MASK",
+      "fabric_reference": "TBD_SYNTHETIC_FABRIC_REFERENCE",
+      "crop_bounds": "TBD",
+      "expected_crop_dimensions": "TBD"
+    },
+    {
+      "fixture_id": "pm004-edge-boundary-stress",
+      "category": "edge_boundary_stress",
+      "source_image": "TBD_SYNTHETIC_SOURCE",
+      "full_mask": "TBD_SYNTHETIC_FULL_MASK",
+      "crop_source": "TBD_SYNTHETIC_CROP_SOURCE",
+      "crop_mask": "TBD_SYNTHETIC_CROP_MASK",
+      "fabric_reference": "TBD_SYNTHETIC_FABRIC_REFERENCE",
+      "crop_bounds": "TBD",
+      "expected_crop_dimensions": "TBD"
+    }
+  ]
+}
