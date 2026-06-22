@@ -222,7 +222,7 @@ async def prepare_user_photo_mask(
                 raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Mask must be a PNG image.")
             mask_bytes = await provided_mask.read()
             mode = "provided"
-        elif allow_generated_mask and settings.user_photo_require_mask_for_strict_edit:
+        elif allow_generated_mask and settings.user_photo_require_mask_for_strict_edit and not settings.is_production_like:
             mask_bytes = _mock_mask_bytes(base_image_path)
             mode = "generated"
         else:
@@ -238,6 +238,8 @@ async def prepare_user_photo_mask(
             raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Mask must be a PNG image.")
         mask_bytes = await provided_mask.read()
     else:
+        if settings.is_production_like:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, STRICT_MASK_REQUIRED_MESSAGE)
         mask_bytes = _mock_mask_bytes(base_image_path)
 
     mask_url = save_mask_image(mask_bytes)
