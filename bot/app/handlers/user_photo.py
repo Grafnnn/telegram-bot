@@ -14,7 +14,7 @@ from app.config import get_settings
 from app.handler_utils import friendly_api_error_message, parse_callback_uuid
 from app.handlers import catalog
 from app.handlers.selected import answer_photo_or_text, generation_result_url
-from app.keyboards import try_on_disabled_keyboard, try_on_recovery_keyboard, try_on_result_keyboard
+from app.keyboards import try_on_disabled_keyboard, try_on_entry_keyboard, try_on_recovery_keyboard, try_on_result_keyboard
 from app.redaction import safe_exception_summary
 from app.states import TryOnPhotoStates
 
@@ -44,13 +44,27 @@ TRY_ON_VALIDATION_MESSAGE = (
 TRY_ON_NO_REFERENCE_IMAGE_MESSAGE = "У выбранной ткани нет изображения для примерки. Выберите другую ткань."
 TRY_ON_MASK_REQUIRED_MESSAGE = (
     "Я не буду перерисовывать всё фото целиком. Для точной примерки нужно выделить область одежды. "
-    "Сейчас можно выбрать другую ткань или отправить другое фото."
+    "Сейчас можно загрузить крупный фрагмент одежды или вернуться в каталог."
 )
 TRY_ON_NO_FABRIC_MESSAGE = "Сначала выберите ткань из каталога, затем отправьте фото."
 TRY_ON_DISABLED_MESSAGE = (
     "Примерка на пользовательском фото временно отключена: мы не будем запускать режим, "
     "который может исказить человека или фон. Каталог тканей и выбор ткани работают."
 )
+TRY_ON_SAFE_ENTRY_MESSAGE = (
+    "Полное фото пока не поддерживается безопасно: мы не будем отправлять в AI лицо, фон или человека целиком.\n\n"
+    "Безопасный MVP сейчас работает только с крупным фрагментом одежды без лица и фона."
+)
+TRY_ON_CROP_INSTRUCTION_MESSAGE = (
+    "Отправьте крупный фрагмент одежды без лица и фона. "
+    "Сейчас безопасная примерка работает только с таким кропом."
+)
+TRY_ON_FULL_PHOTO_UNSUPPORTED_MESSAGE = (
+    "Полное фото пока не поддерживается безопасно. "
+    "Отправьте крупный фрагмент одежды или вернитесь в каталог."
+)
+INPUT_MODE_FULL_PHOTO = "full_photo"
+INPUT_MODE_GARMENT_CROP = "garment_crop"
 
 
 def backend_client() -> BackendAPIClient:
@@ -59,6 +73,10 @@ def backend_client() -> BackendAPIClient:
 
 def _user_photo_try_on_enabled() -> bool:
     return get_settings().user_photo_try_on_enabled
+
+
+def _garment_crop_try_on_enabled() -> bool:
+    return get_settings().user_photo_garment_crop_try_on_enabled
 
 
 def _fabric_summary(data: dict[str, Any]) -> str:
@@ -119,10 +137,16 @@ async def _remember_fabric_for_try_on(state: FSMContext, fabric: dict[str, Any])
 
 async def _ask_for_photo(message: Message, state: FSMContext, fabric: dict[str, Any]) -> None:
     if not _user_photo_try_on_enabled():
+        if _garment_crop_try_on_enabled():
+            await _remember_fabric_for_try_on(state, fabric)
+            await state.update_data(input_mode=INPUT_MODE_GARMENT_CROP)
+            await message.answer(TRY_ON_SAFE_ENTRY_MESSAGE, reply_markup=try_on_entry_keyboard())
+            return
         await state.clear()
         await message.answer(TRY_ON_DISABLED_MESSAGE, reply_markup=try_on_disabled_keyboard())
         return
     await _remember_fabric_for_try_on(state, fabric)
+    await state.update_data(input_mode=INPUT_MODE_FULL_PHOTO)
     await message.answer(
         f"Ткань выбрана: {_fabric_summary(await state.get_data())}. "
         "Теперь отправьте фото, где нужно заменить ткань на одежде.\n"
@@ -130,10 +154,21 @@ async def _ask_for_photo(message: Message, state: FSMContext, fabric: dict[str, 
     )
 
 
-async def _generate_from_photo(message: Message, state: FSMContext, file_id: str) -> None:
-    if not _user_photo_try_on_enabled():
+async def _generate_from_photo(
+    message: Message,
+    state: FSMContext,
+    file_id: str,
+    *,
+    input_mode: str = INPUT_MODE_FULL_PHOTO,
+) -> None:
+    if input_mode == INPUT_MODE_GARMENT_CROP:
+        if not _garment_crop_try_on_enabled():
+            await state.clear()
+            await message.answer(TRY_ON_DISABLED_MESSAGE, reply_markup=try_on_disabled_keyboard())
+            return
+    elif not _user_photo_try_on_enabled():
         await state.clear()
-        await message.answer(TRY_ON_DISABLED_MESSAGE, reply_markup=try_on_disabled_keyboard())
+        await message.answer(TRY_ON_FULL_PHOTO_UNSUPPORTED_MESSAGE, reply_markup=try_on_entry_keyboard())
         return
     if message.from_user is None:
         await message.answer("Не удалось определить пользователя.")
@@ -145,7 +180,12 @@ async def _generate_from_photo(message: Message, state: FSMContext, file_id: str
         await message.answer(TRY_ON_NO_FABRIC_MESSAGE)
         return
     await state.update_data(last_photo_file_id=file_id)
-    await message.answer(GENERATION_PROGRESS_MESSAGE)
+    await state.update_data(input_mode=input_mode)
+    await message.answer(
+        "Генерирую примерку ткани для фрагмента одежды, это может занять до 1–2 минут…"
+        if input_mode == INPUT_MODE_GARMENT_CROP
+        else GENERATION_PROGRESS_MESSAGE
+    )
     try:
         photo_bytes = await _download_telegram_photo(message, file_id)
         client = backend_client()
@@ -159,6 +199,7 @@ async def _generate_from_photo(message: Message, state: FSMContext, file_id: str
             telegram_id=message.from_user.id,
             fabric_id=str(fabric_id),
             photo=photo_bytes,
+            input_mode=input_mode,
         )
     except BackendAPIError as exc:
         if exc.status in {400, 404, 422}:
@@ -183,7 +224,11 @@ async def _generate_from_photo(message: Message, state: FSMContext, file_id: str
     generation_status = (result or {}).get("status")
     if generation_status == GENERATION_COMPLETED_STATUS:
         image_url = generation_result_url((result or {}).get("result_image_url"))
-        caption = f"Готово! Это AI-примерка ткани: {_fabric_summary(data)}."
+        caption = (
+            f"Готово! Это AI-примерка ткани на фрагменте одежды: {_fabric_summary(data)}."
+            if input_mode == INPUT_MODE_GARMENT_CROP
+            else f"Готово! Это AI-примерка ткани: {_fabric_summary(data)}."
+        )
         await state.set_state(TryOnPhotoStates.photo_ready)
         await answer_photo_or_text(
             message,
@@ -215,17 +260,17 @@ async def try_on_selected_fabric(callback: CallbackQuery, state: FSMContext) -> 
     if callback.from_user is None or callback.data is None:
         await callback.answer("Не удалось определить пользователя.", show_alert=True)
         return
-    if not _user_photo_try_on_enabled():
-        await state.clear()
-        await callback.answer("Примерка на фото временно отключена.", show_alert=True)
-        if callback.message:
-            await callback.message.answer(TRY_ON_DISABLED_MESSAGE, reply_markup=try_on_disabled_keyboard())
-        return
     fabric_id = parse_callback_uuid(callback.data, "fabric:try_on:") or parse_callback_uuid(
         callback.data, "pick:try_on:"
     )
     if fabric_id is None:
         await callback.answer("Эта кнопка больше не актуальна. Откройте каталог заново.", show_alert=True)
+        return
+    if not _user_photo_try_on_enabled() and not _garment_crop_try_on_enabled():
+        await state.clear()
+        await callback.answer("Примерка на фото временно отключена.", show_alert=True)
+        if callback.message:
+            await callback.message.answer(TRY_ON_DISABLED_MESSAGE, reply_markup=try_on_disabled_keyboard())
         return
     try:
         client = backend_client()
@@ -244,9 +289,16 @@ async def try_on_selected_fabric(callback: CallbackQuery, state: FSMContext) -> 
     if not fabric:
         await callback.answer("Эта ткань больше недоступна. Откройте каталог заново.", show_alert=True)
         return
-    await callback.answer("Ткань выбрана для примерки.", show_alert=False)
+    if _user_photo_try_on_enabled():
+        await callback.answer("Ткань выбрана для примерки.", show_alert=False)
+        if callback.message:
+            await _ask_for_photo(callback.message, state, fabric)
+        return
+    await callback.answer("Выберите безопасный режим примерки.", show_alert=False)
+    await _remember_fabric_for_try_on(state, fabric)
+    await state.update_data(input_mode=INPUT_MODE_GARMENT_CROP)
     if callback.message:
-        await _ask_for_photo(callback.message, state, fabric)
+        await callback.message.answer(TRY_ON_SAFE_ENTRY_MESSAGE, reply_markup=try_on_entry_keyboard())
 
 
 @router.message(lambda message: message.text == "Загрузить свое фото")
@@ -255,6 +307,27 @@ async def user_photo_for_selected_fabric(message: Message, state: FSMContext) ->
         await message.answer("Не удалось определить пользователя.")
         return
     if not _user_photo_try_on_enabled():
+        if _garment_crop_try_on_enabled():
+            try:
+                client = backend_client()
+                await client.upsert_user(
+                    telegram_id=message.from_user.id,
+                    username=message.from_user.username,
+                    first_name=message.from_user.first_name,
+                    last_name=message.from_user.last_name,
+                )
+                selection = await client.get_selected_fabric(message.from_user.id)
+            except Exception as exc:
+                await message.answer(friendly_api_error_message(exc))
+                return
+            fabric = (selection or {}).get("fabric")
+            if not fabric:
+                await message.answer(TRY_ON_NO_FABRIC_MESSAGE)
+                return
+            await _remember_fabric_for_try_on(state, fabric)
+            await state.update_data(input_mode=INPUT_MODE_GARMENT_CROP)
+            await message.answer(TRY_ON_SAFE_ENTRY_MESSAGE, reply_markup=try_on_entry_keyboard())
+            return
         await state.clear()
         await message.answer(TRY_ON_DISABLED_MESSAGE, reply_markup=try_on_disabled_keyboard())
         return
@@ -290,8 +363,45 @@ async def handle_try_on_photo(message: Message, state: FSMContext) -> None:
     await _generate_from_photo(message, state, message.photo[-1].file_id)
 
 
+@router.message(TryOnPhotoStates.waiting_for_garment_crop, lambda message: not message.photo)
+async def reject_non_garment_crop_photo(message: Message) -> None:
+    await message.answer("Пожалуйста, отправьте крупный фрагмент одежды одним изображением.")
+
+
+@router.message(TryOnPhotoStates.waiting_for_garment_crop)
+async def handle_garment_crop_photo(message: Message, state: FSMContext) -> None:
+    if not message.photo:
+        await reject_non_garment_crop_photo(message)
+        return
+    await _generate_from_photo(
+        message,
+        state,
+        message.photo[-1].file_id,
+        input_mode=INPUT_MODE_GARMENT_CROP,
+    )
+
+
+@router.callback_query(lambda callback: callback.data == "try_on:garment_crop")
+async def start_garment_crop_try_on(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _garment_crop_try_on_enabled():
+        await callback.answer("Безопасная примерка временно отключена.", show_alert=True)
+        return
+    await callback.answer("Жду фрагмент одежды.", show_alert=False)
+    await state.update_data(input_mode=INPUT_MODE_GARMENT_CROP)
+    await state.set_state(TryOnPhotoStates.waiting_for_garment_crop)
+    if callback.message:
+        await callback.message.answer(TRY_ON_CROP_INSTRUCTION_MESSAGE)
+
+
 @router.callback_query(lambda callback: callback.data == "try_on:upload_another")
 async def upload_another_photo(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    if data.get("input_mode") == INPUT_MODE_GARMENT_CROP:
+        await callback.answer("Жду новый фрагмент одежды.", show_alert=False)
+        await state.set_state(TryOnPhotoStates.waiting_for_garment_crop)
+        if callback.message:
+            await callback.message.answer(TRY_ON_CROP_INSTRUCTION_MESSAGE)
+        return
     await callback.answer("Жду новое фото.", show_alert=False)
     await state.set_state(TryOnPhotoStates.waiting_for_photo)
     if callback.message:
@@ -304,11 +414,25 @@ async def regenerate_try_on(callback: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     file_id = data.get("last_photo_file_id")
     if not file_id or callback.message is None:
-        await state.set_state(TryOnPhotoStates.waiting_for_photo)
+        input_mode = data.get("input_mode")
+        await state.set_state(
+            TryOnPhotoStates.waiting_for_garment_crop
+            if input_mode == INPUT_MODE_GARMENT_CROP
+            else TryOnPhotoStates.waiting_for_photo
+        )
         if callback.message:
-            await callback.message.answer("Загрузите фото ещё раз.\n" + PHOTO_SAFETY_COPY)
+            await callback.message.answer(
+                TRY_ON_CROP_INSTRUCTION_MESSAGE
+                if input_mode == INPUT_MODE_GARMENT_CROP
+                else "Загрузите фото ещё раз.\n" + PHOTO_SAFETY_COPY
+            )
         return
-    await _generate_from_photo(callback.message, state, str(file_id))
+    await _generate_from_photo(
+        callback.message,
+        state,
+        str(file_id),
+        input_mode=data.get("input_mode") or INPUT_MODE_FULL_PHOTO,
+    )
 
 
 @router.callback_query(lambda callback: callback.data == "try_on:catalog")

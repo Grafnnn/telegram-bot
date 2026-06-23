@@ -40,6 +40,9 @@ from app.utils.redaction import safe_exception_summary, sanitize_log_message
 router = APIRouter(prefix="/generations", tags=["generations"])
 logger = logging.getLogger(__name__)
 ACTIVE_GENERATION_STATUSES = (GENERATION_STATUS_PENDING, GENERATION_STATUS_PROCESSING)
+USER_PHOTO_INPUT_MODE_FULL_PHOTO = "full_photo"
+USER_PHOTO_INPUT_MODE_GARMENT_CROP = "garment_crop"
+USER_PHOTO_INPUT_MODES = {USER_PHOTO_INPUT_MODE_FULL_PHOTO, USER_PHOTO_INPUT_MODE_GARMENT_CROP}
 
 
 def _generation_or_404(db: Session, generation_id: UUID) -> Generation:
@@ -237,6 +240,33 @@ def build_user_photo_fabric_replacement_prompt(
 
 def _build_user_photo_prompt(fabric: Fabric, *, mask_used: bool = False) -> str:
     return build_user_photo_fabric_replacement_prompt(fabric, mask_used=mask_used)
+
+
+def _build_garment_crop_prompt(fabric: Fabric) -> str:
+    details = [
+        "Edit only this cropped garment image.",
+        "The input image is a close crop of clothing fabric, not a full person photo.",
+        "Use the selected catalog fabric reference image as the only fabric source.",
+        "Replace the crop's visible clothing material with the selected catalog fabric.",
+        "Preserve the crop framing, folds, seams, shadows, garment construction and silhouette.",
+        "Do not create a person, face, body, background, room or full-scene composition.",
+        "Do not add text, logos, watermarks, extra objects or extra people.",
+        "Selected catalog fabric:",
+        f"Fabric id: {fabric.id}",
+        f"SKU: {fabric.sku}",
+        f"Name: {fabric.name}",
+    ]
+    if fabric.description_for_gpt:
+        details.append(f"Description: {fabric.description_for_gpt}")
+    if fabric.category:
+        details.append(f"Category: {fabric.category}")
+    if fabric.color:
+        details.append(f"Color: {fabric.color}")
+    details.append(
+        "The final garment crop must match the selected catalog fabric reference: "
+        "color, pattern, weave, texture, scale and visual style."
+    )
+    return "\n".join(details)
 
 
 def _center_crop_to_aspect(image: Image.Image, target_size: tuple[int, int]) -> Image.Image:
@@ -470,9 +500,10 @@ async def create_user_photo_generation(
     fabric_id: UUID = Form(...),
     photo: UploadFile = File(...),
     mask: UploadFile | None = File(None),
+    input_mode: str = Form(USER_PHOTO_INPUT_MODE_FULL_PHOTO),
     db: Session = Depends(get_db),
 ) -> Generation:
-    return await _create_user_photo_generation(telegram_id, telegram_user_id, fabric_id, photo, mask, db)
+    return await _create_user_photo_generation(telegram_id, telegram_user_id, fabric_id, photo, mask, input_mode, db)
 
 
 async def _create_user_photo_generation(
@@ -481,17 +512,25 @@ async def _create_user_photo_generation(
     fabric_id: UUID,
     photo: UploadFile,
     mask: UploadFile | None,
+    input_mode: str,
     db: Session,
 ) -> Generation:
+    normalized_input_mode = input_mode.strip().lower()
+    if normalized_input_mode not in USER_PHOTO_INPUT_MODES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unsupported user photo input mode.")
     linked_user_id = telegram_user_id
     if telegram_id is not None:
         linked_user_id = _telegram_user_or_404(db, telegram_id).id
     fabric = _fabric_or_404(db, fabric_id)
-    prompt = _build_user_photo_prompt(fabric)
+    prompt = (
+        _build_garment_crop_prompt(fabric)
+        if normalized_input_mode == USER_PHOTO_INPUT_MODE_GARMENT_CROP
+        else _build_user_photo_prompt(fabric)
+    )
     generation = Generation(
         telegram_user_id=linked_user_id,
         fabric_id=fabric_id,
-        mode="user_photo",
+        mode="user_photo_garment_crop" if normalized_input_mode == USER_PHOTO_INPUT_MODE_GARMENT_CROP else "user_photo",
         prompt=prompt,
         status=GENERATION_STATUS_PROCESSING,
     )
@@ -500,26 +539,40 @@ async def _create_user_photo_generation(
     db.refresh(generation)
     try:
         _require_published_fabric(fabric)
-        photo_url = await save_upload(photo, "user-photos")
+        upload_folder = "user-garment-crops" if normalized_input_mode == USER_PHOTO_INPUT_MODE_GARMENT_CROP else "user-photos"
+        photo_url = await save_upload(photo, upload_folder)
         generation.user_photo_url = photo_url
         photo_path, reference_path, reference_type = prepare_user_photo_edit_inputs(photo_url, fabric)
-        mask_result = await prepare_user_photo_mask(
-            photo_path,
-            mask,
-            allow_generated_mask=telegram_id is not None,
-        )
-        if mask_result is not None:
-            generation.mask_image_url = mask_result.mask_image_url
-            prompt = _build_user_photo_prompt(fabric, mask_used=True)
-            generation.prompt = prompt
+        mask_result = None
+        if normalized_input_mode == USER_PHOTO_INPUT_MODE_GARMENT_CROP:
+            if mask is not None:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Garment crop mode does not accept a full-photo mask.")
+        else:
+            mask_result = await prepare_user_photo_mask(
+                photo_path,
+                mask,
+                allow_generated_mask=telegram_id is not None,
+            )
+            if mask_result is not None:
+                generation.mask_image_url = mask_result.mask_image_url
+                prompt = _build_user_photo_prompt(fabric, mask_used=True)
+                generation.prompt = prompt
         logger.info(
-            "User photo generation reference selected generation_id=%s fabric_id=%s image_type=%s mask_mode=%s",
+            "User photo generation reference selected generation_id=%s fabric_id=%s image_type=%s input_mode=%s mask_mode=%s",
             generation.id,
             fabric.id,
             reference_type,
+            normalized_input_mode,
             mask_result.mode if mask_result else "none",
         )
-        if mask_result is not None and mask_result.mode == "generated":
+        if normalized_input_mode == USER_PHOTO_INPUT_MODE_GARMENT_CROP:
+            image_bytes = image_generation_service.generate_fabric_on_user_photo(
+                str(photo_path),
+                str(reference_path),
+                prompt,
+                mask_image_path=None,
+            )
+        elif mask_result is not None and mask_result.mode == "generated":
             image_bytes = _generate_user_photo_with_crop_composite(
                 source_image_path=photo_path,
                 fabric_reference_path=reference_path,

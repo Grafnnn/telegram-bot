@@ -134,10 +134,13 @@ def _post_user_photo(
     telegram_id: int | None = None,
     mask_content: bytes | None = None,
     mask_content_type: str = "image/png",
+    input_mode: str | None = None,
 ):
     data = {"fabric_id": fabric_id}
     if telegram_id is not None:
         data["telegram_id"] = str(telegram_id)
+    if input_mode is not None:
+        data["input_mode"] = input_mode
     files = {"photo": ("photo.png", content, content_type)}
     if mask_content is not None:
         files["mask"] = ("mask.png", mask_content, mask_content_type)
@@ -212,6 +215,100 @@ def test_user_photo_generation_default_requires_mask_before_provider(client: Tes
     assert admin_generation["user_photo_url"].startswith("/uploads/user-photos/")
     assert admin_generation["mask_image_url"] is None
     assert admin_generation["error_message"] == STRICT_MASK_REQUIRED_MESSAGE
+
+
+def test_user_photo_generation_garment_crop_mode_sends_only_crop_to_provider(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric(sku="PHOTO-CROP", name="Crop fabric", category="wool")
+    telegram_id = _create_telegram_user()
+    expected_reference_path = _fabric_reference_path(fabric_id, "texture")
+    captured: dict[str, str | None] = {}
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+    ) -> bytes:
+        captured["provider_input_path"] = user_photo_path
+        captured["fabric_reference_path"] = fabric_reference_path
+        captured["prompt"] = prompt
+        captured["mask_image_path"] = mask_image_path
+        assert Path(user_photo_path).parent.name == "user-garment-crops"
+        assert fabric_reference_path == expected_reference_path
+        assert mask_image_path is None
+        assert "cropped garment image" in prompt
+        assert "not a full person photo" in prompt
+        assert "Do not create a person" in prompt
+        return PNG_300
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+
+    response = _post_user_photo(
+        client,
+        fabric_id,
+        PNG_300,
+        "image/png",
+        BOT_HEADERS,
+        telegram_id=telegram_id,
+        input_mode="garment_crop",
+    )
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["mode"] == "user_photo_garment_crop"
+    assert payload["fabric_id"] == fabric_id
+    assert payload["user_photo_url"].startswith("/uploads/user-garment-crops/")
+    assert payload["mask_image_url"] is None
+    assert payload["result_image_url"].startswith("/uploads/generations/")
+    assert captured["provider_input_path"]
+    assert Path(captured["provider_input_path"] or "").exists()
+
+    admin_response = client.get("/api/admin/generations?status=completed", headers=_admin_headers(client))
+    assert admin_response.status_code == 200, admin_response.text
+    [admin_generation] = admin_response.json()["items"]
+    assert admin_generation["id"] == payload["id"]
+    assert admin_generation["mode"] == "user_photo_garment_crop"
+    assert admin_generation["telegram_user"]["telegram_id"] == telegram_id
+    assert admin_generation["user_photo_url"] == payload["user_photo_url"]
+
+
+def test_user_photo_generation_garment_crop_mode_rejects_mask(client: TestClient, monkeypatch) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    provider_called = False
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+    ) -> bytes:
+        nonlocal provider_called
+        provider_called = True
+        return PNG_300
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+
+    response = _post_user_photo(
+        client,
+        fabric_id,
+        PNG_300,
+        "image/png",
+        BOT_HEADERS,
+        input_mode="garment_crop",
+        mask_content=_mask_bytes(),
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == "Garment crop mode does not accept a full-photo mask."
+    assert provider_called is False
 
 
 def test_user_photo_generation_telegram_request_generates_mask_when_strict(

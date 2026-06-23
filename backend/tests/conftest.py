@@ -53,7 +53,7 @@ def client() -> TestClient:
     get_settings.cache_clear()
     settings = get_settings()
     shutil.rmtree(settings.upload_dir, ignore_errors=True)
-    for folder in ["fabrics", "garment-styles", "generations", "user-photos", "user-photo-masks"]:
+    for folder in ["fabrics", "garment-styles", "generations", "user-photos", "user-garment-crops", "user-photo-masks"]:
         Path(settings.upload_dir, folder).mkdir(parents=True, exist_ok=True)
 
     with engine.begin() as connection:

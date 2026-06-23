@@ -16,7 +16,14 @@ ALLOWED_IMAGE_MIME_TYPES = {
     "image/webp": "webp",
 }
 ALLOWED_EXTENSIONS = set(ALLOWED_IMAGE_MIME_TYPES.values()) | {"jpeg"}
-ALLOWED_FOLDERS = {"fabrics", "garment-styles", "generations", "user-photos", "user-photo-masks"}
+ALLOWED_FOLDERS = {
+    "fabrics",
+    "garment-styles",
+    "generations",
+    "user-photos",
+    "user-garment-crops",
+    "user-photo-masks",
+}
 IMAGE_SIGNATURES: dict[str, Callable[[bytes], bool]] = {
     "image/jpeg": lambda content: content.startswith(b"\xff\xd8\xff"),
     "image/png": lambda content: content.startswith(b"\x89PNG\r\n\x1a\n"),
