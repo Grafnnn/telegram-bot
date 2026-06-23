@@ -47,10 +47,18 @@ TRY_ON_MASK_REQUIRED_MESSAGE = (
     "Сейчас можно выбрать другую ткань или отправить другое фото."
 )
 TRY_ON_NO_FABRIC_MESSAGE = "Сначала выберите ткань из каталога, затем отправьте фото."
+TRY_ON_DISABLED_MESSAGE = (
+    "Примерка на пользовательском фото временно отключена: мы не будем запускать режим, "
+    "который может исказить человека или фон. Каталог тканей и выбор ткани работают."
+)
 
 
 def backend_client() -> BackendAPIClient:
     return BackendAPIClient(get_settings().backend_api_url)
+
+
+def _user_photo_try_on_enabled() -> bool:
+    return get_settings().user_photo_try_on_enabled
 
 
 def _fabric_summary(data: dict[str, Any]) -> str:
@@ -110,6 +118,10 @@ async def _remember_fabric_for_try_on(state: FSMContext, fabric: dict[str, Any])
 
 
 async def _ask_for_photo(message: Message, state: FSMContext, fabric: dict[str, Any]) -> None:
+    if not _user_photo_try_on_enabled():
+        await state.clear()
+        await message.answer(TRY_ON_DISABLED_MESSAGE, reply_markup=try_on_result_keyboard())
+        return
     await _remember_fabric_for_try_on(state, fabric)
     await message.answer(
         f"Ткань выбрана: {_fabric_summary(await state.get_data())}. "
@@ -119,6 +131,10 @@ async def _ask_for_photo(message: Message, state: FSMContext, fabric: dict[str, 
 
 
 async def _generate_from_photo(message: Message, state: FSMContext, file_id: str) -> None:
+    if not _user_photo_try_on_enabled():
+        await state.clear()
+        await message.answer(TRY_ON_DISABLED_MESSAGE, reply_markup=try_on_result_keyboard())
+        return
     if message.from_user is None:
         await message.answer("Не удалось определить пользователя.")
         return
@@ -199,6 +215,12 @@ async def try_on_selected_fabric(callback: CallbackQuery, state: FSMContext) -> 
     if callback.from_user is None or callback.data is None:
         await callback.answer("Не удалось определить пользователя.", show_alert=True)
         return
+    if not _user_photo_try_on_enabled():
+        await state.clear()
+        await callback.answer("Примерка на фото временно отключена.", show_alert=True)
+        if callback.message:
+            await callback.message.answer(TRY_ON_DISABLED_MESSAGE, reply_markup=try_on_result_keyboard())
+        return
     fabric_id = parse_callback_uuid(callback.data, "fabric:try_on:") or parse_callback_uuid(
         callback.data, "pick:try_on:"
     )
@@ -231,6 +253,10 @@ async def try_on_selected_fabric(callback: CallbackQuery, state: FSMContext) -> 
 async def user_photo_for_selected_fabric(message: Message, state: FSMContext) -> None:
     if message.from_user is None:
         await message.answer("Не удалось определить пользователя.")
+        return
+    if not _user_photo_try_on_enabled():
+        await state.clear()
+        await message.answer(TRY_ON_DISABLED_MESSAGE, reply_markup=try_on_result_keyboard())
         return
     try:
         client = backend_client()

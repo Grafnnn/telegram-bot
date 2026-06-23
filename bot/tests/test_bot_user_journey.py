@@ -20,6 +20,7 @@ from app.handler_utils import (
     parse_callback_uuid,
 )
 from app.handlers import catalog, fallback, fabric_selection, selected, start, user_photo
+from app.keyboards import select_fabric_keyboard
 from app.states import TryOnPhotoStates
 from app.redaction import REDACTED, redact_mapping, safe_exception_summary, sanitize_log_message
 
@@ -215,6 +216,11 @@ def keyboard_callback_data(reply_markup) -> list[str]:
     return [button.callback_data for row in reply_markup.inline_keyboard for button in row]
 
 
+@pytest.fixture(autouse=True)
+def enable_user_photo_try_on_for_existing_journey_tests(monkeypatch) -> None:
+    monkeypatch.setenv("BOT_USER_PHOTO_TRY_ON_ENABLED", "true")
+
+
 def test_start_shows_welcome_even_when_backend_is_unavailable(monkeypatch) -> None:
     monkeypatch.setattr(fabric_selection, "backend_client", lambda: UnavailableClient())
     message = FakeMessage("/start")
@@ -359,6 +365,49 @@ def test_try_on_callback_sets_waiting_photo_state(monkeypatch) -> None:
     assert state.data["fabric_sku"] == "SILK-001"
     assert "Ткань выбрана: Шелк молочный (SILK-001)" in message.answers[-1][0]
     assert "Не отправляйте документы" in message.answers[-1][0]
+
+
+def test_try_on_button_is_hidden_when_user_photo_try_on_disabled(monkeypatch) -> None:
+    monkeypatch.setenv("BOT_USER_PHOTO_TRY_ON_ENABLED", "false")
+    fabric_id = str(uuid4())
+
+    keyboard = select_fabric_keyboard(fabric_id)
+
+    assert keyboard_callback_data(keyboard) == [f"fabric:select:{fabric_id}"]
+
+
+def test_try_on_callback_is_blocked_when_user_photo_try_on_disabled(monkeypatch) -> None:
+    def fail_backend_client():
+        raise AssertionError("backend should not be called while user photo try-on is disabled")
+
+    monkeypatch.setenv("BOT_USER_PHOTO_TRY_ON_ENABLED", "false")
+    monkeypatch.setattr(user_photo, "backend_client", fail_backend_client)
+    message = FakeMessage()
+    state = FakeState({"fabric_id": str(uuid4())})
+    callback = FakeCallback(f"fabric:try_on:{uuid4()}", message)
+
+    run(user_photo.try_on_selected_fabric(callback, state))
+
+    assert state.cleared is True
+    assert callback.answers == [("Примерка на фото временно отключена.", True)]
+    assert message.answers[-1][0] == user_photo.TRY_ON_DISABLED_MESSAGE
+    assert_no_secret_leak(message.answers[-1][0])
+
+
+def test_try_on_photo_is_blocked_when_user_photo_try_on_disabled(monkeypatch) -> None:
+    def fail_backend_client():
+        raise AssertionError("backend should not be called while user photo try-on is disabled")
+
+    monkeypatch.setenv("BOT_USER_PHOTO_TRY_ON_ENABLED", "false")
+    monkeypatch.setattr(user_photo, "backend_client", fail_backend_client)
+    state = FakeState({"fabric_id": str(uuid4()), "fabric_name": "Шелк молочный", "fabric_sku": "SILK-001"})
+    message = FakeMessage(photo=[SimpleNamespace(file_id="high")])
+
+    run(user_photo.handle_try_on_photo(message, state))
+
+    assert state.cleared is True
+    assert message.answers[-1][0] == user_photo.TRY_ON_DISABLED_MESSAGE
+    assert_no_secret_leak(message.answers[-1][0])
 
 
 def test_try_on_non_photo_message_is_rejected_safely() -> None:
