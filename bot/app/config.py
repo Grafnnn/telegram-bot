@@ -17,6 +17,13 @@ def _get_float(name: str, default: float) -> float:
         return default
 
 
+def _get_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class BotSettings:
     telegram_bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", TOKEN_PLACEHOLDER)
@@ -25,6 +32,7 @@ class BotSettings:
     bot_internal_token: str = os.getenv("BOT_INTERNAL_TOKEN", BOT_INTERNAL_TOKEN_PLACEHOLDER)
     backend_request_timeout_seconds: float = _get_float("BOT_BACKEND_TIMEOUT_SECONDS", 10)
     generation_request_timeout_seconds: float = _get_float("BOT_GENERATION_TIMEOUT_SECONDS", 180)
+    user_photo_try_on_enabled: bool = False
 
     @property
     def is_configured(self) -> bool:
@@ -32,4 +40,4 @@ class BotSettings:
 
 
 def get_settings() -> BotSettings:
-    return BotSettings()
+    return BotSettings(user_photo_try_on_enabled=_get_bool("BOT_USER_PHOTO_TRY_ON_ENABLED", False))

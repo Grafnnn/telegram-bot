@@ -84,7 +84,7 @@ cp .env.example .env
 | `INITIAL_ADMIN_PASSWORD` | backend bootstrap | Сильный initial password; `admin12345` и пустое значение запрещены в production-like режиме. |
 | `BOT_INTERNAL_TOKEN` | backend и bot | Одинаковый strong token в обоих сервисах; placeholder запрещен в production-like backend. |
 | `TELEGRAM_BOT_TOKEN` | bot | Реальный token Telegram-бота; placeholder безопасно завершает bot container без запуска polling. |
-| `BOT_BACKEND_TIMEOUT_SECONDS`, `BOT_GENERATION_TIMEOUT_SECONDS` | bot | Обычный backend timeout и увеличенный timeout для user-photo generation upload. |
+| `BOT_BACKEND_TIMEOUT_SECONDS`, `BOT_GENERATION_TIMEOUT_SECONDS`, `BOT_USER_PHOTO_TRY_ON_ENABLED` | bot | Обычный backend timeout, увеличенный timeout для user-photo generation upload и отдельный rollout flag для пользовательской фото-примерки. `BOT_USER_PHOTO_TRY_ON_ENABLED=false` по умолчанию скрывает/блокирует user-photo flow в Telegram. |
 | `OPENAI_API_KEY`, `OPENAI_MODEL` | backend AI/recommendation | Реальный key нужен для GPT-подбора; placeholder оставляет controlled fallback/error. |
 | `OPENAI_IMAGE_MODEL`, `OPENAI_IMAGE_SIZE`, `OPENAI_IMAGE_QUALITY`, `OPENAI_IMAGE_OUTPUT_FORMAT`, `OPENAI_IMAGE_TIMEOUT_SECONDS` | backend image generation | Настройки OpenAI image edit для catalog-style и user-photo try-on; defaults: `gpt-image-1`, `1024x1536`, `medium`, `png`, `120`. |
 | `USER_PHOTO_MASK_MODE`, `USER_PHOTO_REQUIRE_MASK_FOR_STRICT_EDIT`, `USER_PHOTO_MASK_MIN_COVERAGE_PERCENT`, `USER_PHOTO_MASK_MAX_COVERAGE_PERCENT`, `USER_PHOTO_MASK_DILATE_PIXELS`, `USER_PHOTO_MASK_DEBUG_SAVE` | backend user-photo try-on | Clothing mask pipeline. Strict clothing-only edits require a valid mask by default. `provided` accepts explicit PNG masks, `mock` is tests/dev only, `provider` is reserved and fails closed until a segmentation provider exists. |
@@ -321,6 +321,7 @@ curl -X POST http://localhost:8000/api/admin/fabrics \
 
 ## AI-примерка ткани на пользовательском фото
 
+- Telegram user-facing flow защищен отдельным bot-side rollout flag `BOT_USER_PHOTO_TRY_ON_ENABLED=false` по умолчанию. Пока нет настоящей clothing segmentation или operator/user-provided mask workflow, bot не показывает кнопку примерки на пользовательском фото и не отправляет фото в backend из старых callback/state.
 - Пользователь выбирает опубликованную ткань в Telegram и отправляет одно безопасное фото, где видна одежда.
 - Backend вызывает `POST /api/generations/user-photo`, сохраняет user photo в `UPLOAD_DIR/user-photos`, применяет texture image выбранной ткани через OpenAI image edit и сохраняет результат в `UPLOAD_DIR/generations`.
 - Prompt-only user-photo edit может изменить лицо, руки, фон, предметы и композицию, поэтому он не считается production-quality clothing-only примеркой.
