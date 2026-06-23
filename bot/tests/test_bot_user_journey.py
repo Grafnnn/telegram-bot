@@ -377,14 +377,14 @@ def test_try_on_button_is_hidden_when_user_photo_try_on_disabled(monkeypatch) ->
     assert keyboard_callback_data(keyboard) == [f"fabric:select:{fabric_id}"]
 
 
-def test_try_on_button_is_visible_for_safe_crop_mode_when_full_photo_is_disabled(monkeypatch) -> None:
+def test_try_on_button_stays_hidden_when_crop_env_is_enabled(monkeypatch) -> None:
     monkeypatch.setenv("BOT_USER_PHOTO_TRY_ON_ENABLED", "false")
     monkeypatch.setenv("BOT_USER_PHOTO_GARMENT_CROP_TRY_ON_ENABLED", "true")
     fabric_id = str(uuid4())
 
     keyboard = select_fabric_keyboard(fabric_id)
 
-    assert keyboard_callback_data(keyboard) == [f"fabric:select:{fabric_id}", f"fabric:try_on:{fabric_id}"]
+    assert keyboard_callback_data(keyboard) == [f"fabric:select:{fabric_id}"]
 
 
 def test_try_on_callback_is_blocked_when_all_user_photo_modes_disabled(monkeypatch) -> None:
@@ -407,27 +407,27 @@ def test_try_on_callback_is_blocked_when_all_user_photo_modes_disabled(monkeypat
     assert_no_secret_leak(message.answers[-1][0])
 
 
-def test_try_on_callback_offers_safe_crop_mode_when_full_photo_is_disabled(monkeypatch) -> None:
-    client = TryOnSelectionClient()
+def test_try_on_callback_is_blocked_when_crop_env_is_enabled(monkeypatch) -> None:
+    def fail_backend_client():
+        raise AssertionError("backend should not be called for user-facing crop-only try-on")
+
     monkeypatch.setenv("BOT_USER_PHOTO_TRY_ON_ENABLED", "false")
     monkeypatch.setenv("BOT_USER_PHOTO_GARMENT_CROP_TRY_ON_ENABLED", "true")
-    monkeypatch.setattr(user_photo, "backend_client", lambda: client)
+    monkeypatch.setattr(user_photo, "backend_client", fail_backend_client)
     message = FakeMessage()
     state = FakeState()
-    fabric_id = str(uuid4())
-    callback = FakeCallback(f"fabric:try_on:{fabric_id}", message)
+    callback = FakeCallback(f"fabric:try_on:{uuid4()}", message)
 
     run(user_photo.try_on_selected_fabric(callback, state))
 
-    assert callback.answers == [("Выберите безопасный режим примерки.", False)]
-    assert state.data["fabric_id"] == fabric_id
-    assert state.data["input_mode"] == user_photo.INPUT_MODE_GARMENT_CROP
-    assert user_photo.TRY_ON_SAFE_ENTRY_MESSAGE in message.answers[-1][0]
-    assert keyboard_callback_data(message.answers[-1][1]) == ["try_on:garment_crop", "try_on:catalog"]
+    assert state.cleared is True
+    assert callback.answers == [("Примерка на фото временно отключена.", True)]
+    assert message.answers[-1][0] == user_photo.TRY_ON_DISABLED_MESSAGE
+    assert keyboard_callback_data(message.answers[-1][1]) == ["try_on:catalog"]
     assert_no_secret_leak(message.answers[-1][0])
 
 
-def test_full_photo_is_rejected_with_safe_crop_recovery_when_full_photo_disabled(monkeypatch) -> None:
+def test_full_photo_is_rejected_with_catalog_recovery_when_full_photo_disabled(monkeypatch) -> None:
     def fail_backend_client():
         raise AssertionError("backend should not be called for full photo while full-photo mode is disabled")
 
@@ -441,19 +441,18 @@ def test_full_photo_is_rejected_with_safe_crop_recovery_when_full_photo_disabled
 
     assert state.cleared is True
     assert message.answers[-1][0] == user_photo.TRY_ON_FULL_PHOTO_UNSUPPORTED_MESSAGE
-    assert keyboard_callback_data(message.answers[-1][1]) == ["try_on:garment_crop", "try_on:catalog"]
+    assert keyboard_callback_data(message.answers[-1][1]) == ["try_on:catalog"]
     assert_no_secret_leak(message.answers[-1][0])
 
 
-def test_garment_crop_photo_uses_crop_input_mode(monkeypatch) -> None:
+def test_garment_crop_photo_is_blocked_before_backend(monkeypatch) -> None:
     client = TryOnGenerationClient({"status": "completed", "result_image_url": "/uploads/generations/crop.png"})
     monkeypatch.setenv("BOT_USER_PHOTO_TRY_ON_ENABLED", "false")
     monkeypatch.setenv("BOT_USER_PHOTO_GARMENT_CROP_TRY_ON_ENABLED", "true")
     monkeypatch.setattr(user_photo, "backend_client", lambda: client)
-    fabric_id = str(uuid4())
     state = FakeState(
         {
-            "fabric_id": fabric_id,
+            "fabric_id": str(uuid4()),
             "fabric_name": "Шелк молочный",
             "fabric_sku": "SILK-001",
             "input_mode": user_photo.INPUT_MODE_GARMENT_CROP,
@@ -464,16 +463,11 @@ def test_garment_crop_photo_uses_crop_input_mode(monkeypatch) -> None:
 
     run(user_photo.handle_garment_crop_photo(message, state))
 
-    assert client.calls
-    assert client.calls[0]["telegram_id"] == 1001
-    assert client.calls[0]["fabric_id"] == fabric_id
-    assert client.calls[0]["photo"] == PNG_1X1
-    assert client.calls[0]["input_mode"] == user_photo.INPUT_MODE_GARMENT_CROP
-    assert state.state == TryOnPhotoStates.photo_ready
-    assert state.data["last_photo_file_id"] == "high"
-    assert message.photos
-    assert message.photos[-1][0].endswith("/uploads/generations/crop.png")
-    assert "фрагменте одежды" in message.photos[-1][1]
+    assert client.calls == []
+    assert state.cleared is True
+    assert message.answers[-1][0] == user_photo.TRY_ON_DISABLED_MESSAGE
+    assert keyboard_callback_data(message.answers[-1][1]) == ["try_on:catalog"]
+    assert_no_secret_leak(message.answers[-1][0])
 
 
 def test_try_on_non_photo_message_is_rejected_safely() -> None:
@@ -575,10 +569,7 @@ def test_try_on_photo_mask_required_error_is_safe_and_actionable(monkeypatch) ->
     run(user_photo.handle_try_on_photo(message, state))
 
     assert message.answers[-1][0] == user_photo.TRY_ON_MASK_REQUIRED_MESSAGE
-    assert keyboard_callback_data(message.answers[-1][1]) == [
-        "try_on:garment_crop",
-        "try_on:catalog",
-    ]
+    assert keyboard_callback_data(message.answers[-1][1]) == ["try_on:catalog"]
     assert_no_secret_leak(message.answers[-1][0])
 
 

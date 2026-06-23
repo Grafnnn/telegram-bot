@@ -53,18 +53,8 @@ def try_on_disabled_keyboard() -> InlineKeyboardMarkup:
 
 
 def try_on_entry_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="✂️ Загрузить крупный фрагмент одежды", callback_data="try_on:garment_crop")],
-            [InlineKeyboardButton(text="🧵 Перейти в каталог тканей", callback_data="try_on:catalog")],
-        ]
-    )
+    return try_on_disabled_keyboard()
 
 
 def try_on_recovery_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="✂️ Загрузить фрагмент одежды", callback_data="try_on:garment_crop")],
-            [InlineKeyboardButton(text="🧵 Выбрать другую ткань", callback_data="try_on:catalog")],
-        ]
-    )
+    return try_on_disabled_keyboard()
