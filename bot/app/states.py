@@ -9,5 +9,6 @@ class PickFabricStates(StatesGroup):
 
 class TryOnPhotoStates(StatesGroup):
     waiting_for_photo = State()
+    waiting_for_mask_preset = State()
     waiting_for_garment_crop = State()
     photo_ready = State()

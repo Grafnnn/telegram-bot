@@ -20,7 +20,7 @@ from app.handler_utils import (
     parse_callback_uuid,
 )
 from app.handlers import catalog, fallback, fabric_selection, selected, start, user_photo
-from app.keyboards import select_fabric_keyboard
+from app.keyboards import CHANGE_FABRIC_ON_PHOTO_TEXT, select_fabric_keyboard
 from app.states import TryOnPhotoStates
 from app.redaction import REDACTED, redact_mapping, safe_exception_summary, sanitize_log_message
 
@@ -153,6 +153,14 @@ class TryOnSelectionClient:
                 "sku": "SILK-001",
             }
         }
+
+
+class TryOnNoSelectedFabricClient:
+    async def upsert_user(self, **kwargs):
+        return {"ok": True}
+
+    async def get_selected_fabric(self, telegram_id: int):
+        return {"fabric": None}
 
 
 class TryOnGenerationClient:
@@ -367,6 +375,35 @@ def test_try_on_callback_sets_waiting_photo_state(monkeypatch) -> None:
     assert "Не отправляйте документы" in message.answers[-1][0]
 
 
+def test_change_fabric_on_photo_without_selected_fabric_offers_catalog(monkeypatch) -> None:
+    monkeypatch.setattr(user_photo, "backend_client", lambda: TryOnNoSelectedFabricClient())
+    message = FakeMessage(CHANGE_FABRIC_ON_PHOTO_TEXT)
+    state = FakeState()
+
+    run(user_photo.change_fabric_on_photo(message, state))
+
+    assert state.cleared is True
+    assert len(message.answers) == 2
+    assert "Без выбранной области одежды AI не запускается" in message.answers[0][0]
+    assert message.answers[-1][0] == user_photo.TRY_ON_START_NO_FABRIC_MESSAGE
+    assert keyboard_callback_data(message.answers[-1][1]) == ["try_on:catalog"]
+
+
+def test_change_fabric_on_photo_with_selected_fabric_asks_for_photo(monkeypatch) -> None:
+    client = TryOnSelectionClient()
+    monkeypatch.setattr(user_photo, "backend_client", lambda: client)
+    message = FakeMessage(CHANGE_FABRIC_ON_PHOTO_TEXT)
+    state = FakeState()
+
+    run(user_photo.change_fabric_on_photo(message, state))
+
+    assert state.state == TryOnPhotoStates.waiting_for_photo
+    assert state.data["fabric_id"] == client.fabric_id
+    assert state.data["input_mode"] == user_photo.INPUT_MODE_FULL_PHOTO
+    assert "Ткань выбрана: Шелк молочный (SILK-001)" in message.answers[-1][0]
+    assert "Не отправляйте документы" in message.answers[-1][0]
+
+
 def test_try_on_button_is_hidden_when_user_photo_try_on_disabled(monkeypatch) -> None:
     monkeypatch.setenv("BOT_USER_PHOTO_TRY_ON_ENABLED", "false")
     monkeypatch.setenv("BOT_USER_PHOTO_GARMENT_CROP_TRY_ON_ENABLED", "false")
@@ -427,9 +464,9 @@ def test_try_on_callback_is_blocked_when_crop_env_is_enabled(monkeypatch) -> Non
     assert_no_secret_leak(message.answers[-1][0])
 
 
-def test_full_photo_is_rejected_with_catalog_recovery_when_full_photo_disabled(monkeypatch) -> None:
+def test_full_photo_upload_waits_for_mask_preset_when_full_photo_disabled(monkeypatch) -> None:
     def fail_backend_client():
-        raise AssertionError("backend should not be called for full photo while full-photo mode is disabled")
+        raise AssertionError("backend should not be called before user selects mask preset")
 
     monkeypatch.setenv("BOT_USER_PHOTO_TRY_ON_ENABLED", "false")
     monkeypatch.setenv("BOT_USER_PHOTO_GARMENT_CROP_TRY_ON_ENABLED", "true")
@@ -439,10 +476,16 @@ def test_full_photo_is_rejected_with_catalog_recovery_when_full_photo_disabled(m
 
     run(user_photo.handle_try_on_photo(message, state))
 
-    assert state.cleared is True
-    assert message.answers[-1][0] == user_photo.TRY_ON_FULL_PHOTO_UNSUPPORTED_MESSAGE
-    assert keyboard_callback_data(message.answers[-1][1]) == ["try_on:catalog"]
-    assert_no_secret_leak(message.answers[-1][0])
+    assert state.state == TryOnPhotoStates.waiting_for_mask_preset
+    assert state.data["last_photo_file_id"] == "high"
+    assert message.photos[-1][0] == "high"
+    assert message.photos[-1][1] == user_photo.TRY_ON_PHOTO_MASK_PRESET_MESSAGE
+    assert keyboard_callback_data(message.photos[-1][2]) == [
+        "try_on:preset:central_upper_garment",
+        "try_on:catalog",
+        "try_on:cancel",
+    ]
+    assert_no_secret_leak(message.photos[-1][1])
 
 
 def test_garment_crop_photo_is_blocked_before_backend(monkeypatch) -> None:
@@ -480,25 +523,79 @@ def test_try_on_non_photo_message_is_rejected_safely() -> None:
     assert_no_secret_leak(message.answers[-1][0])
 
 
-def test_try_on_photo_success_sends_generated_result(monkeypatch) -> None:
-    client = TryOnGenerationClient({"status": "completed", "result_image_url": "/uploads/generations/result.png"})
-    monkeypatch.setattr(user_photo, "backend_client", lambda: client)
-    fabric_id = str(uuid4())
-    state = FakeState({"fabric_id": fabric_id, "fabric_name": "Шелк молочный", "fabric_sku": "SILK-001"})
+def test_try_on_photo_upload_shows_preset_keyboard_without_generation(monkeypatch) -> None:
+    def fail_backend_client():
+        raise AssertionError("backend should not be called until a preset area is selected")
+
+    monkeypatch.setattr(user_photo, "backend_client", fail_backend_client)
+    state = FakeState({"fabric_id": str(uuid4()), "fabric_name": "Шелк молочный", "fabric_sku": "SILK-001"})
     photo = [SimpleNamespace(file_id="low"), SimpleNamespace(file_id="high")]
     message = FakeMessage(photo=photo)
 
     run(user_photo.handle_try_on_photo(message, state))
 
+    assert state.state == TryOnPhotoStates.waiting_for_mask_preset
+    assert state.data["last_photo_file_id"] == "high"
+    assert message.photos[-1][0] == "high"
+    assert message.photos[-1][1] == user_photo.TRY_ON_PHOTO_MASK_PRESET_MESSAGE
+    assert keyboard_callback_data(message.photos[-1][2]) == [
+        "try_on:preset:central_upper_garment",
+        "try_on:catalog",
+        "try_on:cancel",
+    ]
+
+
+def test_try_on_preset_success_sends_generated_result(monkeypatch) -> None:
+    client = TryOnGenerationClient({"status": "completed", "result_image_url": "/uploads/generations/result.png"})
+    monkeypatch.setattr(user_photo, "backend_client", lambda: client)
+    fabric_id = str(uuid4())
+    state = FakeState(
+        {
+            "fabric_id": fabric_id,
+            "fabric_name": "Шелк молочный",
+            "fabric_sku": "SILK-001",
+            "last_photo_file_id": "high",
+        }
+    )
+    message = FakeMessage()
+    callback = FakeCallback("try_on:preset:central_upper_garment", message)
+
+    run(user_photo.use_central_upper_garment_preset(callback, state))
+
+    assert callback.answers == [("Запускаю безопасную замену выбранной области.", False)]
     assert client.calls
     assert client.calls[0]["telegram_id"] == 1001
     assert client.calls[0]["fabric_id"] == fabric_id
     assert client.calls[0]["photo"] == PNG_1X1
+    assert client.calls[0]["input_mode"] == user_photo.INPUT_MODE_FULL_PHOTO
+    assert client.calls[0]["mask_preset"] == user_photo.MASK_PRESET_CENTRAL_UPPER_GARMENT
     assert state.state == TryOnPhotoStates.photo_ready
     assert state.data["last_photo_file_id"] == "high"
     assert message.photos
     assert message.photos[-1][0].endswith("/uploads/generations/result.png")
     assert "AI-примерка ткани" in message.photos[-1][1]
+
+
+def test_try_on_preset_text_starts_generation(monkeypatch) -> None:
+    client = TryOnGenerationClient({"status": "completed", "result_image_url": "/uploads/generations/result.png"})
+    monkeypatch.setattr(user_photo, "backend_client", lambda: client)
+    fabric_id = str(uuid4())
+    state = FakeState(
+        {
+            "fabric_id": fabric_id,
+            "fabric_name": "Шелк молочный",
+            "fabric_sku": "SILK-001",
+            "last_photo_file_id": "high",
+        }
+    )
+    message = FakeMessage("1")
+
+    run(user_photo.handle_mask_preset_text(message, state))
+
+    assert client.calls
+    assert client.calls[0]["fabric_id"] == fabric_id
+    assert client.calls[0]["mask_preset"] == user_photo.MASK_PRESET_CENTRAL_UPPER_GARMENT
+    assert state.state == TryOnPhotoStates.photo_ready
 
 
 def test_try_on_photo_without_selected_fabric_does_not_call_backend(monkeypatch) -> None:
@@ -518,10 +615,18 @@ def test_try_on_photo_without_selected_fabric_does_not_call_backend(monkeypatch)
 def test_try_on_photo_failure_is_friendly_and_safe(monkeypatch) -> None:
     client = TryOnGenerationClient({"status": "failed", "error_message": f"Traceback X-Bot-Token={SECRET_TOKEN}"})
     monkeypatch.setattr(user_photo, "backend_client", lambda: client)
-    state = FakeState({"fabric_id": str(uuid4()), "fabric_name": "Шелк молочный", "fabric_sku": "SILK-001"})
-    message = FakeMessage(photo=[SimpleNamespace(file_id="high")])
+    state = FakeState(
+        {
+            "fabric_id": str(uuid4()),
+            "fabric_name": "Шелк молочный",
+            "fabric_sku": "SILK-001",
+            "last_photo_file_id": "high",
+        }
+    )
+    message = FakeMessage()
+    callback = FakeCallback("try_on:preset:central_upper_garment", message)
 
-    run(user_photo.handle_try_on_photo(message, state))
+    run(user_photo.use_central_upper_garment_preset(callback, state))
 
     assert message.answers[-1][0] == user_photo.GENERATION_FAILED_MESSAGE
     assert_no_secret_leak(message.answers[-1][0])
@@ -530,10 +635,18 @@ def test_try_on_photo_failure_is_friendly_and_safe(monkeypatch) -> None:
 def test_try_on_photo_missing_openai_key_is_friendly(monkeypatch) -> None:
     client = TryOnGenerationClient({"status": "failed", "error_message": "OpenAI API key не настроен"})
     monkeypatch.setattr(user_photo, "backend_client", lambda: client)
-    state = FakeState({"fabric_id": str(uuid4()), "fabric_name": "Шелк молочный", "fabric_sku": "SILK-001"})
-    message = FakeMessage(photo=[SimpleNamespace(file_id="high")])
+    state = FakeState(
+        {
+            "fabric_id": str(uuid4()),
+            "fabric_name": "Шелк молочный",
+            "fabric_sku": "SILK-001",
+            "last_photo_file_id": "high",
+        }
+    )
+    message = FakeMessage()
+    callback = FakeCallback("try_on:preset:central_upper_garment", message)
 
-    run(user_photo.handle_try_on_photo(message, state))
+    run(user_photo.use_central_upper_garment_preset(callback, state))
 
     assert message.answers[-1][0] == user_photo.GENERATION_UNAVAILABLE_MESSAGE
     assert_no_secret_leak(message.answers[-1][0])
@@ -541,10 +654,18 @@ def test_try_on_photo_missing_openai_key_is_friendly(monkeypatch) -> None:
 
 def test_try_on_photo_timeout_is_friendly(monkeypatch) -> None:
     monkeypatch.setattr(user_photo, "backend_client", lambda: TryOnTimeoutClient())
-    state = FakeState({"fabric_id": str(uuid4()), "fabric_name": "Шелк молочный", "fabric_sku": "SILK-001"})
-    message = FakeMessage(photo=[SimpleNamespace(file_id="high")])
+    state = FakeState(
+        {
+            "fabric_id": str(uuid4()),
+            "fabric_name": "Шелк молочный",
+            "fabric_sku": "SILK-001",
+            "last_photo_file_id": "high",
+        }
+    )
+    message = FakeMessage()
+    callback = FakeCallback("try_on:preset:central_upper_garment", message)
 
-    run(user_photo.handle_try_on_photo(message, state))
+    run(user_photo.use_central_upper_garment_preset(callback, state))
 
     assert message.answers[-1][0] == user_photo.GENERATION_TIMEOUT_MESSAGE
     assert_no_secret_leak(message.answers[-1][0])
@@ -552,10 +673,18 @@ def test_try_on_photo_timeout_is_friendly(monkeypatch) -> None:
 
 def test_try_on_photo_missing_reference_image_is_friendly(monkeypatch) -> None:
     monkeypatch.setattr(user_photo, "backend_client", lambda: TryOnNoReferenceClient())
-    state = FakeState({"fabric_id": str(uuid4()), "fabric_name": "Шелк молочный", "fabric_sku": "SILK-001"})
-    message = FakeMessage(photo=[SimpleNamespace(file_id="high")])
+    state = FakeState(
+        {
+            "fabric_id": str(uuid4()),
+            "fabric_name": "Шелк молочный",
+            "fabric_sku": "SILK-001",
+            "last_photo_file_id": "high",
+        }
+    )
+    message = FakeMessage()
+    callback = FakeCallback("try_on:preset:central_upper_garment", message)
 
-    run(user_photo.handle_try_on_photo(message, state))
+    run(user_photo.use_central_upper_garment_preset(callback, state))
 
     assert message.answers[-1][0] == user_photo.TRY_ON_NO_REFERENCE_IMAGE_MESSAGE
     assert_no_secret_leak(message.answers[-1][0])
@@ -563,10 +692,18 @@ def test_try_on_photo_missing_reference_image_is_friendly(monkeypatch) -> None:
 
 def test_try_on_photo_mask_required_error_is_safe_and_actionable(monkeypatch) -> None:
     monkeypatch.setattr(user_photo, "backend_client", lambda: TryOnMaskRequiredClient())
-    state = FakeState({"fabric_id": str(uuid4()), "fabric_name": "Шелк молочный", "fabric_sku": "SILK-001"})
-    message = FakeMessage(photo=[SimpleNamespace(file_id="high")])
+    state = FakeState(
+        {
+            "fabric_id": str(uuid4()),
+            "fabric_name": "Шелк молочный",
+            "fabric_sku": "SILK-001",
+            "last_photo_file_id": "high",
+        }
+    )
+    message = FakeMessage()
+    callback = FakeCallback("try_on:preset:central_upper_garment", message)
 
-    run(user_photo.handle_try_on_photo(message, state))
+    run(user_photo.use_central_upper_garment_preset(callback, state))
 
     assert message.answers[-1][0] == user_photo.TRY_ON_MASK_REQUIRED_MESSAGE
     assert keyboard_callback_data(message.answers[-1][1]) == ["try_on:catalog"]
@@ -623,6 +760,25 @@ def test_api_client_sends_internal_token_and_raises_controlled_errors(monkeypatc
     assert fields[3][0]["filename"] == "telegram-photo.png"
     assert fields[3][1]["Content-Type"] == "image/png"
     assert captured_timeouts[-1] == 180
+
+    assert run(
+        client.create_user_photo_generation(
+            1001,
+            str(uuid4()),
+            PNG_1X1,
+            mask_preset=user_photo.MASK_PRESET_CENTRAL_UPPER_GARMENT,
+        )
+    ) == {"items": []}
+    preset_form = captured_requests[-1][3]
+    preset_fields = getattr(preset_form, "_fields")
+    assert [field[0]["name"] for field in preset_fields] == [
+        "telegram_id",
+        "fabric_id",
+        "input_mode",
+        "mask_preset",
+        "photo",
+    ]
+    assert preset_fields[3][2] == user_photo.MASK_PRESET_CENTRAL_UPPER_GARMENT
 
     assert friendly_api_error_message(BackendAPIError(422, "/bot/users/1/selected-fabric")) == VALIDATION_MESSAGE
     assert_no_secret_leak(friendly_api_error_message(BackendAPIError(401, "/bot/users/1/selected-fabric")))

@@ -15,6 +15,8 @@ from app.services.storage_service import resolve_upload_path
 
 MASK_FOLDER = "user-photo-masks"
 EDITABLE_ALPHA_THRESHOLD = 128
+MASK_PRESET_CENTRAL_UPPER_GARMENT = "central_upper_garment"
+ALLOWED_MASK_PRESETS = {MASK_PRESET_CENTRAL_UPPER_GARMENT}
 GENERATED_MASK_LEFT_RATIO = 0.34
 GENERATED_MASK_TOP_RATIO = 0.36
 GENERATED_MASK_RIGHT_RATIO = 0.66
@@ -22,6 +24,7 @@ GENERATED_MASK_BOTTOM_RATIO = 0.68
 ALLOWED_MASK_MODES = {"off", "provided", "mock", "provider"}
 STRICT_MASK_REQUIRED_MESSAGE = "Для точной примерки нужна маска области одежды."
 MASK_PROVIDER_NOT_CONFIGURED_MESSAGE = "Clothing mask provider is not configured yet."
+INVALID_MASK_PRESET_MESSAGE = "Unsupported user photo mask preset."
 
 MASK_ERROR_MESSAGES = {
     "path_traversal": "Mask path is unsafe.",
@@ -199,6 +202,56 @@ def _mock_mask_bytes(base_image_path: Path) -> bytes:
     buffer = BytesIO()
     mask.save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def _preset_mask_bytes(base_image_path: Path, preset: str) -> bytes:
+    if preset != MASK_PRESET_CENTRAL_UPPER_GARMENT:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, INVALID_MASK_PRESET_MESSAGE)
+
+    width, height = _load_base_size(base_image_path)
+    if width < 160 or height < 160:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "User photo is too small for preset mask editing.")
+
+    mask = Image.new("RGBA", (width, height), color=(0, 0, 0, 255))
+    draw = ImageDraw.Draw(mask)
+    left = int(width * 0.32)
+    right = int(width * 0.68)
+    top = int(height * 0.38)
+    bottom = int(height * 0.72)
+    shoulder_inset = int(width * 0.04)
+    lower_inset = int(width * 0.02)
+    points = [
+        (left + shoulder_inset, top),
+        (right - shoulder_inset, top),
+        (right, int(height * 0.50)),
+        (right - lower_inset, bottom),
+        (left + lower_inset, bottom),
+        (left, int(height * 0.50)),
+    ]
+    draw.polygon(points, fill=(0, 0, 0, 0))
+
+    buffer = BytesIO()
+    mask.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def prepare_user_photo_preset_mask(base_image_path: Path, preset: str) -> MaskResult:
+    """Create and validate a conservative explicit preset mask for one user photo."""
+
+    normalized_preset = preset.strip().lower()
+    if normalized_preset not in ALLOWED_MASK_PRESETS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, INVALID_MASK_PRESET_MESSAGE)
+
+    mask_url = save_mask_image(_preset_mask_bytes(base_image_path, normalized_preset))
+    mask_path = resolve_upload_path(mask_url)
+    readiness = validate_edit_mask(mask_path, base_image_path)
+    if not readiness.ready:
+        try:
+            mask_path.unlink()
+        except OSError:
+            pass
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Preset clothing mask is not valid for editing.")
+    return MaskResult(mask_image_url=mask_url, mask_path=mask_path, readiness=readiness, mode=f"preset:{normalized_preset}")
 
 
 def _mask_mode() -> str:

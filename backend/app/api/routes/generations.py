@@ -28,7 +28,7 @@ from app.services import image_generation_service
 from app.services.crop_composite_service import composite_edited_crop, prepare_crop_inputs
 from app.services.image_generation_service import IMAGE_ERROR, IMAGE_EDIT_PROMPT, USER_PHOTO_EDIT_PROMPT
 from app.services.image_readiness_service import select_ready_fabric_reference_path
-from app.services.mask_service import prepare_user_photo_mask
+from app.services.mask_service import prepare_user_photo_mask, prepare_user_photo_preset_mask
 from app.services.preservation_service import (
     PreservationThresholds,
     UserPhotoPreservationError,
@@ -500,10 +500,20 @@ async def create_user_photo_generation(
     fabric_id: UUID = Form(...),
     photo: UploadFile = File(...),
     mask: UploadFile | None = File(None),
+    mask_preset: str | None = Form(None),
     input_mode: str = Form(USER_PHOTO_INPUT_MODE_FULL_PHOTO),
     db: Session = Depends(get_db),
 ) -> Generation:
-    return await _create_user_photo_generation(telegram_id, telegram_user_id, fabric_id, photo, mask, input_mode, db)
+    return await _create_user_photo_generation(
+        telegram_id,
+        telegram_user_id,
+        fabric_id,
+        photo,
+        mask,
+        mask_preset,
+        input_mode,
+        db,
+    )
 
 
 async def _create_user_photo_generation(
@@ -512,6 +522,7 @@ async def _create_user_photo_generation(
     fabric_id: UUID,
     photo: UploadFile,
     mask: UploadFile | None,
+    mask_preset: str | None,
     input_mode: str,
     db: Session,
 ) -> Generation:
@@ -547,12 +558,15 @@ async def _create_user_photo_generation(
         if normalized_input_mode == USER_PHOTO_INPUT_MODE_GARMENT_CROP:
             if mask is not None:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, "Garment crop mode does not accept a full-photo mask.")
+            if mask_preset:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Garment crop mode does not accept a full-photo mask preset.")
         else:
-            mask_result = await prepare_user_photo_mask(
-                photo_path,
-                mask,
-                allow_generated_mask=telegram_id is not None,
-            )
+            if mask is not None:
+                mask_result = await prepare_user_photo_mask(photo_path, mask)
+            elif mask_preset:
+                mask_result = prepare_user_photo_preset_mask(photo_path, mask_preset)
+            else:
+                mask_result = await prepare_user_photo_mask(photo_path, None)
             if mask_result is not None:
                 generation.mask_image_url = mask_result.mask_image_url
                 prompt = _build_user_photo_prompt(fabric, mask_used=True)
