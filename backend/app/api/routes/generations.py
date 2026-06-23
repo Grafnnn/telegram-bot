@@ -586,7 +586,7 @@ async def _create_user_photo_generation(
                 prompt,
                 mask_image_path=None,
             )
-        elif mask_result is not None and mask_result.mode == "generated":
+        elif mask_result is not None and (mask_result.mode == "generated" or mask_result.mode.startswith("preset:")):
             image_bytes = _generate_user_photo_with_crop_composite(
                 source_image_path=photo_path,
                 fabric_reference_path=reference_path,
