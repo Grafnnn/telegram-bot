@@ -43,6 +43,14 @@ def try_on_result_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def try_on_disabled_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🧵 Перейти в каталог тканей", callback_data="try_on:catalog")],
+        ]
+    )
+
+
 def try_on_recovery_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
