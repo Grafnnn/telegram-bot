@@ -4,11 +4,14 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardBu
 
 from app.config import get_settings
 
+CHANGE_FABRIC_ON_PHOTO_TEXT = "Поменять ткань на фото"
+
 
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="Выбрать ткань из каталога")],
+            [KeyboardButton(text=CHANGE_FABRIC_ON_PHOTO_TEXT)],
             [KeyboardButton(text="Подобрать ткань по описанию")],
             [KeyboardButton(text="Выбрать фасон")],
             [KeyboardButton(text="Мой выбор")],
