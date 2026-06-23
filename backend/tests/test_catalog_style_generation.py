@@ -217,6 +217,9 @@ def test_catalog_style_generation_saves_mocked_result(client: TestClient, monkey
         assert base_image_path
         assert fabric_texture_path
         assert mask_image_path
+        with Image.open(mask_image_path) as provider_mask:
+            assert provider_mask.mode == "RGBA"
+            assert provider_mask.getchannel("A").getextrema()[0] == 0
         assert "Replace only the fabric" in prompt
         return PNG_1X1
 

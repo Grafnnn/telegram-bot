@@ -162,6 +162,27 @@ def _build_catalog_style_prompt(fabric: Fabric, style: GarmentStyle) -> str:
     return "\n".join(details)
 
 
+def _catalog_style_mask_for_provider(mask_path: Path, tmp_dir: Path) -> Path:
+    """Return a provider-ready RGBA PNG mask for catalog-style edits."""
+
+    try:
+        with Image.open(mask_path) as image:
+            mask_image = image.convert("RGBA")
+            alpha = mask_image.getchannel("A")
+            if alpha.getextrema()[0] < 255:
+                return mask_path
+
+            luminance = image.convert("L")
+            derived_alpha = luminance.point(lambda value: 0 if value > 8 else 255, mode="L")
+            mask_image.putalpha(derived_alpha)
+    except (OSError, SyntaxError, UnidentifiedImageError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Garment style mask image is not readable.") from exc
+
+    provider_mask_path = tmp_dir / "catalog_style_mask.png"
+    mask_image.save(provider_mask_path, format="PNG")
+    return provider_mask_path
+
+
 def build_user_photo_fabric_replacement_prompt(
     fabric: Fabric,
     garment_style: GarmentStyle | None = None,
@@ -416,12 +437,14 @@ def create_catalog_style_generation(
     db.commit()
     db.refresh(generation)
     try:
-        image_bytes = image_generation_service.generate_fabric_on_catalog_style(
-            str(base_path),
-            str(texture_path),
-            str(mask_path) if mask_path else None,
-            prompt,
-        )
+        with TemporaryDirectory(prefix="catalog-style-mask-") as tmp_dir:
+            provider_mask_path = _catalog_style_mask_for_provider(mask_path, Path(tmp_dir)) if mask_path else None
+            image_bytes = image_generation_service.generate_fabric_on_catalog_style(
+                str(base_path),
+                str(texture_path),
+                str(provider_mask_path) if provider_mask_path else None,
+                prompt,
+            )
         _mark_generation_completed(generation, image_bytes)
     except Exception as exc:
         _mark_generation_failed(generation, exc)
