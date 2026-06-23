@@ -358,7 +358,10 @@ def test_user_photo_generation_preset_mask_calls_provider_with_mask(
     assert payload["mask_image_url"].startswith("/uploads/user-photo-masks/")
     assert captured["mask_image_path"]
     assert captured["mask_exists_during_call"] == "True"
-    assert captured["provider_input_size"] == "300x300"
+    assert captured["provider_input_size"] != "300x300"
+    crop_width, crop_height = [int(value) for value in (captured["provider_input_size"] or "").split("x")]
+    assert crop_width <= 150
+    assert crop_height <= 150
     assert "A clothing edit mask is provided" in (captured["prompt"] or "")
     assert payload["result_image_url"].startswith("/uploads/generations/")
     persisted_mask_path = get_settings().upload_dir / payload["mask_image_url"].removeprefix("/uploads/")
@@ -374,7 +377,7 @@ def test_user_photo_generation_preset_mask_calls_provider_with_mask(
     assert admin_generation["mask_image_url"] == payload["mask_image_url"]
 
 
-def test_user_photo_generation_preset_mask_rejects_protected_region_drift(
+def test_user_photo_generation_preset_mask_composite_discards_provider_protected_crop_drift(
     client: TestClient,
     monkeypatch,
 ) -> None:
@@ -408,8 +411,8 @@ def test_user_photo_generation_preset_mask_rejects_protected_region_drift(
 
     assert response.status_code == 201, response.text
     payload = response.json()
-    assert payload["status"] == "failed"
-    assert payload["result_image_url"] is None
+    assert payload["status"] == "completed"
+    assert payload["result_image_url"].startswith("/uploads/generations/")
     assert payload["mask_image_url"].startswith("/uploads/user-photo-masks/")
     assert captured["mask_image_path"]
 
