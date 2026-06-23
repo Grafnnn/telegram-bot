@@ -10,7 +10,7 @@ from app.services.seed_service import seed_demo_data, seed_initial_admin
 from app.utils.redaction import safe_exception_summary
 
 logger = logging.getLogger(__name__)
-UPLOAD_FOLDERS = ("fabrics", "garment-styles", "generations", "user-photos", "user-photo-masks")
+UPLOAD_FOLDERS = ("fabrics", "garment-styles", "generations", "user-photos", "user-garment-crops", "user-photo-masks")
 
 
 def prepare_upload_dirs(upload_dir: Path) -> None:

@@ -20,7 +20,8 @@ def main_menu() -> ReplyKeyboardMarkup:
 
 def select_fabric_keyboard(fabric_id: str, source: str = "fabric") -> InlineKeyboardMarkup:
     inline_keyboard = [[InlineKeyboardButton(text="Выбрать эту ткань", callback_data=f"{source}:select:{fabric_id}")]]
-    if get_settings().user_photo_try_on_enabled:
+    settings = get_settings()
+    if settings.user_photo_try_on_enabled or settings.user_photo_garment_crop_try_on_enabled:
         inline_keyboard.append(
             [InlineKeyboardButton(text="🪄 Примерить на моём фото", callback_data=f"{source}:try_on:{fabric_id}")]
         )
@@ -51,11 +52,19 @@ def try_on_disabled_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def try_on_entry_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✂️ Загрузить крупный фрагмент одежды", callback_data="try_on:garment_crop")],
+            [InlineKeyboardButton(text="🧵 Перейти в каталог тканей", callback_data="try_on:catalog")],
+        ]
+    )
+
+
 def try_on_recovery_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="✂️ Загрузить фрагмент одежды", callback_data="try_on:garment_crop")],
             [InlineKeyboardButton(text="🧵 Выбрать другую ткань", callback_data="try_on:catalog")],
-            [InlineKeyboardButton(text="📸 Отправить другое фото", callback_data="try_on:upload_another")],
-            [InlineKeyboardButton(text="В каталог", callback_data="try_on:catalog")],
         ]
     )

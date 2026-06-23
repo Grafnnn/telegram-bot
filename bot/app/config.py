@@ -33,6 +33,7 @@ class BotSettings:
     backend_request_timeout_seconds: float = _get_float("BOT_BACKEND_TIMEOUT_SECONDS", 10)
     generation_request_timeout_seconds: float = _get_float("BOT_GENERATION_TIMEOUT_SECONDS", 180)
     user_photo_try_on_enabled: bool = False
+    user_photo_garment_crop_try_on_enabled: bool = True
 
     @property
     def is_configured(self) -> bool:
@@ -40,4 +41,7 @@ class BotSettings:
 
 
 def get_settings() -> BotSettings:
-    return BotSettings(user_photo_try_on_enabled=_get_bool("BOT_USER_PHOTO_TRY_ON_ENABLED", False))
+    return BotSettings(
+        user_photo_try_on_enabled=_get_bool("BOT_USER_PHOTO_TRY_ON_ENABLED", False),
+        user_photo_garment_crop_try_on_enabled=_get_bool("BOT_USER_PHOTO_GARMENT_CROP_TRY_ON_ENABLED", True),
+    )
