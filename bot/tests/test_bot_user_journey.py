@@ -391,6 +391,7 @@ def test_try_on_callback_is_blocked_when_user_photo_try_on_disabled(monkeypatch)
     assert state.cleared is True
     assert callback.answers == [("Примерка на фото временно отключена.", True)]
     assert message.answers[-1][0] == user_photo.TRY_ON_DISABLED_MESSAGE
+    assert keyboard_callback_data(message.answers[-1][1]) == ["try_on:catalog"]
     assert_no_secret_leak(message.answers[-1][0])
 
 
@@ -407,6 +408,7 @@ def test_try_on_photo_is_blocked_when_user_photo_try_on_disabled(monkeypatch) ->
 
     assert state.cleared is True
     assert message.answers[-1][0] == user_photo.TRY_ON_DISABLED_MESSAGE
+    assert keyboard_callback_data(message.answers[-1][1]) == ["try_on:catalog"]
     assert_no_secret_leak(message.answers[-1][0])
 
 

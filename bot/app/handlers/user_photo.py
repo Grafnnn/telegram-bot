@@ -14,7 +14,7 @@ from app.config import get_settings
 from app.handler_utils import friendly_api_error_message, parse_callback_uuid
 from app.handlers import catalog
 from app.handlers.selected import answer_photo_or_text, generation_result_url
-from app.keyboards import try_on_recovery_keyboard, try_on_result_keyboard
+from app.keyboards import try_on_disabled_keyboard, try_on_recovery_keyboard, try_on_result_keyboard
 from app.redaction import safe_exception_summary
 from app.states import TryOnPhotoStates
 
@@ -120,7 +120,7 @@ async def _remember_fabric_for_try_on(state: FSMContext, fabric: dict[str, Any])
 async def _ask_for_photo(message: Message, state: FSMContext, fabric: dict[str, Any]) -> None:
     if not _user_photo_try_on_enabled():
         await state.clear()
-        await message.answer(TRY_ON_DISABLED_MESSAGE, reply_markup=try_on_result_keyboard())
+        await message.answer(TRY_ON_DISABLED_MESSAGE, reply_markup=try_on_disabled_keyboard())
         return
     await _remember_fabric_for_try_on(state, fabric)
     await message.answer(
@@ -133,7 +133,7 @@ async def _ask_for_photo(message: Message, state: FSMContext, fabric: dict[str, 
 async def _generate_from_photo(message: Message, state: FSMContext, file_id: str) -> None:
     if not _user_photo_try_on_enabled():
         await state.clear()
-        await message.answer(TRY_ON_DISABLED_MESSAGE, reply_markup=try_on_result_keyboard())
+        await message.answer(TRY_ON_DISABLED_MESSAGE, reply_markup=try_on_disabled_keyboard())
         return
     if message.from_user is None:
         await message.answer("Не удалось определить пользователя.")
@@ -219,7 +219,7 @@ async def try_on_selected_fabric(callback: CallbackQuery, state: FSMContext) -> 
         await state.clear()
         await callback.answer("Примерка на фото временно отключена.", show_alert=True)
         if callback.message:
-            await callback.message.answer(TRY_ON_DISABLED_MESSAGE, reply_markup=try_on_result_keyboard())
+            await callback.message.answer(TRY_ON_DISABLED_MESSAGE, reply_markup=try_on_disabled_keyboard())
         return
     fabric_id = parse_callback_uuid(callback.data, "fabric:try_on:") or parse_callback_uuid(
         callback.data, "pick:try_on:"
@@ -256,7 +256,7 @@ async def user_photo_for_selected_fabric(message: Message, state: FSMContext) ->
         return
     if not _user_photo_try_on_enabled():
         await state.clear()
-        await message.answer(TRY_ON_DISABLED_MESSAGE, reply_markup=try_on_result_keyboard())
+        await message.answer(TRY_ON_DISABLED_MESSAGE, reply_markup=try_on_disabled_keyboard())
         return
     try:
         client = backend_client()
