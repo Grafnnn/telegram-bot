@@ -18,6 +18,8 @@ from app.models.fabric_image import FabricImage
 from app.models.generation import Generation
 from app.models.telegram_user import TelegramUser
 from app.services.mask_service import (
+    INVALID_MASK_PRESET_MESSAGE,
+    MASK_PRESET_CENTRAL_UPPER_GARMENT,
     MASK_PROVIDER_NOT_CONFIGURED_MESSAGE,
     STRICT_MASK_REQUIRED_MESSAGE,
     calculate_edit_coverage,
@@ -135,12 +137,15 @@ def _post_user_photo(
     mask_content: bytes | None = None,
     mask_content_type: str = "image/png",
     input_mode: str | None = None,
+    mask_preset: str | None = None,
 ):
     data = {"fabric_id": fabric_id}
     if telegram_id is not None:
         data["telegram_id"] = str(telegram_id)
     if input_mode is not None:
         data["input_mode"] = input_mode
+    if mask_preset is not None:
+        data["mask_preset"] = mask_preset
     files = {"photo": ("photo.png", content, content_type)}
     if mask_content is not None:
         files["mask"] = ("mask.png", mask_content, mask_content_type)
@@ -311,7 +316,7 @@ def test_user_photo_generation_garment_crop_mode_rejects_mask(client: TestClient
     assert provider_called is False
 
 
-def test_user_photo_generation_telegram_request_generates_mask_when_strict(
+def test_user_photo_generation_preset_mask_calls_provider_with_mask(
     client: TestClient,
     monkeypatch,
 ) -> None:
@@ -344,6 +349,7 @@ def test_user_photo_generation_telegram_request_generates_mask_when_strict(
         "image/png",
         BOT_HEADERS,
         telegram_id=telegram_id,
+        mask_preset=MASK_PRESET_CENTRAL_UPPER_GARMENT,
     )
 
     assert response.status_code == 201, response.text
@@ -352,14 +358,11 @@ def test_user_photo_generation_telegram_request_generates_mask_when_strict(
     assert payload["mask_image_url"].startswith("/uploads/user-photo-masks/")
     assert captured["mask_image_path"]
     assert captured["mask_exists_during_call"] == "True"
-    assert captured["provider_input_size"] != "300x300"
-    crop_width, crop_height = [int(value) for value in (captured["provider_input_size"] or "").split("x")]
-    assert crop_width <= 150
-    assert crop_height <= 150
+    assert captured["provider_input_size"] == "300x300"
     assert "A clothing edit mask is provided" in (captured["prompt"] or "")
     assert payload["result_image_url"].startswith("/uploads/generations/")
     persisted_mask_path = get_settings().upload_dir / payload["mask_image_url"].removeprefix("/uploads/")
-    assert calculate_edit_coverage(persisted_mask_path) == pytest.approx(10.45, abs=0.5)
+    assert calculate_edit_coverage(persisted_mask_path) == pytest.approx(11.5, abs=0.5)
     with Image.open(get_settings().upload_dir / payload["result_image_url"].removeprefix("/uploads/")) as result_image:
         assert result_image.size == (300, 300)
 
@@ -369,6 +372,81 @@ def test_user_photo_generation_telegram_request_generates_mask_when_strict(
     assert admin_generation["id"] == payload["id"]
     assert admin_generation["telegram_user"]["telegram_id"] == telegram_id
     assert admin_generation["mask_image_url"] == payload["mask_image_url"]
+
+
+def test_user_photo_generation_preset_mask_rejects_protected_region_drift(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    telegram_id = _create_telegram_user()
+    captured: dict[str, str | None] = {}
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+    ) -> bytes:
+        captured["mask_image_path"] = mask_image_path
+        assert mask_image_path is not None
+        return _provider_output_changing_protected_region(user_photo_path, mask_image_path)
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+
+    response = _post_user_photo(
+        client,
+        fabric_id,
+        PNG_300,
+        "image/png",
+        BOT_HEADERS,
+        telegram_id=telegram_id,
+        mask_preset=MASK_PRESET_CENTRAL_UPPER_GARMENT,
+    )
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["status"] == "failed"
+    assert payload["result_image_url"] is None
+    assert payload["mask_image_url"].startswith("/uploads/user-photo-masks/")
+    assert captured["mask_image_path"]
+
+
+def test_user_photo_generation_invalid_mask_preset_fails_before_provider(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    provider_called = False
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+    ) -> bytes:
+        nonlocal provider_called
+        provider_called = True
+        return PNG_300
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+
+    response = _post_user_photo(
+        client,
+        fabric_id,
+        PNG_300,
+        "image/png",
+        BOT_HEADERS,
+        mask_preset="whole_person",
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == INVALID_MASK_PRESET_MESSAGE
+    assert provider_called is False
 
 
 def test_user_photo_generation_legacy_no_mask_mode_can_be_enabled_explicitly(

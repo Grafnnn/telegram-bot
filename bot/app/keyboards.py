@@ -47,6 +47,16 @@ def try_on_result_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def try_on_mask_preset_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Куртка / рубашка по центру фото", callback_data="try_on:preset:central_upper_garment")],
+            [InlineKeyboardButton(text="🧵 Выбрать другую ткань", callback_data="try_on:catalog")],
+            [InlineKeyboardButton(text="Отмена", callback_data="try_on:cancel")],
+        ]
+    )
+
+
 def try_on_disabled_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[

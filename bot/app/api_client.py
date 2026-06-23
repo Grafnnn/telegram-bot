@@ -118,12 +118,15 @@ class BackendAPIClient:
         filename: str | None = None,
         content_type: str | None = None,
         input_mode: str = "full_photo",
+        mask_preset: str | None = None,
     ) -> dict | None:
         inferred_filename, inferred_content_type = image_upload_metadata(photo)
         form = aiohttp.FormData()
         form.add_field("telegram_id", str(telegram_id))
         form.add_field("fabric_id", fabric_id)
         form.add_field("input_mode", input_mode)
+        if mask_preset:
+            form.add_field("mask_preset", mask_preset)
         form.add_field(
             "photo",
             photo,
