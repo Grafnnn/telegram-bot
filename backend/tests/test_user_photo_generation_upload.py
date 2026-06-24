@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import shutil
 from io import BytesIO
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -84,6 +86,21 @@ def _provider_output_changing_only_mask(user_photo_path: str, mask_image_path: s
             for x in range(candidate.width):
                 if alpha.getpixel((x, y)) < 128:
                     pixels[x, y] = color
+    buffer = BytesIO()
+    candidate.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _provider_output_changing_only_mask_at_double_size(user_photo_path: str, mask_image_path: str) -> bytes:
+    with Image.open(user_photo_path) as base_image, Image.open(mask_image_path) as mask_image:
+        candidate = base_image.convert("RGB")
+        alpha = mask_image.convert("RGBA").getchannel("A")
+        pixels = candidate.load()
+        for y in range(candidate.height):
+            for x in range(candidate.width):
+                if alpha.getpixel((x, y)) < 128:
+                    pixels[x, y] = (180, 30, 180)
+        candidate = candidate.resize((candidate.width * 2, candidate.height * 2), Image.Resampling.NEAREST)
     buffer = BytesIO()
     candidate.save(buffer, format="PNG")
     return buffer.getvalue()
@@ -391,6 +408,7 @@ def test_user_photo_generation_preset_mask_calls_provider_with_mask(
     assert captured["provider_input_size"] == "300x300"
     assert captured["provider_mask_size"] == "300x300"
     assert "A clothing edit mask is provided" in (captured["prompt"] or "")
+    assert "Retexture the existing visible T-shirt fabric" in (captured["prompt"] or "")
     assert "Return the full-frame edited original photo" in (captured["prompt"] or "")
     assert "rectangular patch" in (captured["prompt"] or "")
     assert payload["result_image_url"].startswith("/uploads/generations/")
@@ -455,9 +473,70 @@ def test_user_photo_generation_visible_inner_tshirt_preset_uses_narrow_mask_and_
     assert Path(captured["fabric_reference_path"] or "").name == "fabric_reference_normalized.png"
     assert captured["fabric_reference_size"] == "1024x1024"
     assert "fabric_reference_normalized.png" not in (captured["prompt"] or "")
+    assert "visible inner T-shirt area under an open overshirt" in (captured["prompt"] or "")
+    assert "Do not generate a new shirt" in (captured["prompt"] or "")
+    assert "Do not place a rectangular swatch" in (captured["prompt"] or "")
+    assert "Do not create a collage" in (captured["prompt"] or "")
     persisted_mask_path = get_settings().upload_dir / payload["mask_image_url"].removeprefix("/uploads/")
     coverage = calculate_edit_coverage(persisted_mask_path)
     assert 3.0 <= coverage <= 20.0
+
+
+def test_user_photo_generation_normalizes_same_aspect_provider_output(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+    ) -> bytes:
+        assert mask_image_path is not None
+        return _provider_output_changing_only_mask_at_double_size(user_photo_path, mask_image_path)
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+
+    response = _post_user_photo(
+        client,
+        fabric_id,
+        PNG_300,
+        "image/png",
+        BOT_HEADERS,
+        mask_preset=MASK_PRESET_CENTRAL_UPPER_GARMENT,
+    )
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["result_image_url"].startswith("/uploads/generations/")
+    with Image.open(get_settings().upload_dir / payload["result_image_url"].removeprefix("/uploads/")) as result_image:
+        assert result_image.size == (300, 300)
+
+
+def test_fabric_reference_normalization_crops_obvious_border(tmp_path: Path) -> None:
+    from app.api.routes import generations as generation_routes
+
+    reference = Image.new("RGB", (320, 240), (255, 255, 255))
+    draw = ImageDraw.Draw(reference)
+    draw.rectangle((30, 20, 289, 219), fill=(70, 120, 180))
+    reference_path = tmp_path / "bordered_reference.png"
+    reference.save(reference_path, format="PNG")
+
+    normalized_path, metadata = generation_routes._normalized_fabric_reference_for_provider(reference_path, tmp_path)
+
+    assert normalized_path.name == "fabric_reference_normalized.png"
+    assert metadata["raw_fabric_size"] == [320, 240]
+    assert metadata["normalized_fabric_size"] == [1024, 1024]
+    assert metadata["borders_detected_removed"] is True
+    assert metadata["crop_box"] == [30, 20, 290, 220]
+    with Image.open(normalized_path) as normalized:
+        assert normalized.size == (1024, 1024)
+        assert normalized.getpixel((0, 0)) != (255, 255, 255)
 
 
 def test_user_photo_generation_retries_masked_edit_once_after_preservation_failure(
@@ -941,6 +1020,65 @@ def test_user_photo_generation_provided_mask_rejects_size_mismatched_provider_ou
     assert payload["result_image_url"] is None
     assert "сохранить исходное фото" in payload["error_message"]
     assert not any((get_settings().upload_dir / "generations").iterdir())
+
+
+def test_user_photo_generation_debug_artifacts_are_private_and_sanitized(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    debug_root = get_settings().upload_dir.parent / "tryon-debug-private"
+    shutil.rmtree(debug_root, ignore_errors=True)
+    monkeypatch.setenv("TRYON_DEBUG_ARTIFACTS_ENABLED", "true")
+    get_settings.cache_clear()
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+    ) -> bytes:
+        assert mask_image_path is not None
+        return _provider_output_changing_protected_region(user_photo_path, mask_image_path)
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+
+    try:
+        response = _post_user_photo(
+            client,
+            fabric_id,
+            PNG_300,
+            "image/png",
+            BOT_HEADERS,
+            mask_preset=MASK_PRESET_CENTRAL_UPPER_GARMENT,
+        )
+    finally:
+        monkeypatch.delenv("TRYON_DEBUG_ARTIFACTS_ENABLED", raising=False)
+        get_settings.cache_clear()
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["status"] == "failed"
+    assert payload["result_image_url"] is None
+
+    generation_debug_dir = debug_root / payload["id"]
+    attempt_dir = generation_debug_dir / "attempt_1"
+    assert (attempt_dir / "original.png").is_file()
+    assert (attempt_dir / "mask.png").is_file()
+    assert (attempt_dir / "mask_overlay_preview.png").is_file()
+    assert (attempt_dir / "fabric_reference_raw.png").is_file()
+    assert (attempt_dir / "fabric_reference_normalized.png").is_file()
+    assert (attempt_dir / "provider_output_raw_attempt_1.png").is_file()
+    guardrail_report = json.loads((attempt_dir / "guardrail_report_attempt_1.json").read_text(encoding="utf-8"))
+    request_metadata = json.loads((attempt_dir / "provider_request_metadata_attempt_1.json").read_text(encoding="utf-8"))
+    summary = json.loads((generation_debug_dir / "summary.json").read_text(encoding="utf-8"))
+    serialized = json.dumps([guardrail_report, request_metadata, summary], ensure_ascii=False)
+    assert "base64" not in serialized.lower()
+    assert "OPENAI_API_KEY" not in serialized
+    assert "BOT_INTERNAL_TOKEN" not in serialized
+    assert payload["result_image_url"] is None
 
 
 def test_user_photo_generation_provided_mask_mode_requires_mask_before_provider(

@@ -8,7 +8,7 @@ providers or inspect secrets.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from io import BytesIO
 from pathlib import Path
 
@@ -58,6 +58,30 @@ class PreservationCheckResult:
     message: str
     thresholds: PreservationThresholds
     drift: OutsideMaskDrift | None = None
+    metadata: "PreservationImageMetadata | None" = None
+    normalized_candidate_image_bytes: bytes | None = None
+
+
+@dataclass(frozen=True)
+class PreservationImageMetadata:
+    """Sanitized image geometry metadata for debugging preservation decisions."""
+
+    original_size: tuple[int, int] | None
+    mask_size: tuple[int, int] | None
+    provider_output_size: tuple[int, int] | None
+    normalized_output_size: tuple[int, int] | None
+    aspect_ratio_delta: float | None
+    size_normalized: bool
+    reject_reason: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        """Return JSON-safe metadata with no paths or binary payloads."""
+
+        data = asdict(self)
+        for key in ("original_size", "mask_size", "provider_output_size", "normalized_output_size"):
+            value = data[key]
+            data[key] = list(value) if value else None
+        return data
 
 
 class UserPhotoPreservationError(RuntimeError):
@@ -190,6 +214,45 @@ def _load_candidate_bytes(candidate_image_bytes: bytes) -> Image.Image:
         return image.copy()
 
 
+def _image_to_png_bytes(image: Image.Image) -> bytes:
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _aspect_ratio(size: tuple[int, int]) -> float:
+    width, height = size
+    return width / height if height else 0.0
+
+
+def _can_normalize_full_frame_candidate(
+    *,
+    original_size: tuple[int, int],
+    candidate_size: tuple[int, int],
+    aspect_ratio_delta: float,
+) -> bool:
+    """Return whether a provider output can be safely resized for comparison.
+
+    The provider may return a valid full-frame edit at a different pixel size.
+    We only normalize when the aspect ratio is effectively the same and the
+    candidate is not a tiny thumbnail/crop. Different-aspect outputs remain a
+    hard fail because resizing them would hide crop/letterbox/paste artifacts.
+    """
+
+    if candidate_size == original_size:
+        return True
+    original_width, original_height = original_size
+    candidate_width, candidate_height = candidate_size
+    if min(original_size) <= 0 or min(candidate_size) <= 0:
+        return False
+    if aspect_ratio_delta > 0.01:
+        return False
+    width_ratio = candidate_width / original_width
+    height_ratio = candidate_height / original_height
+    # Avoid treating 1x1 or tiny thumbnails as full-frame provider results.
+    return width_ratio >= 0.5 and height_ratio >= 0.5
+
+
 def calculate_outside_mask_drift(
     base_image: Image.Image,
     candidate_image: Image.Image,
@@ -258,12 +321,20 @@ def evaluate_generated_image_preservation(
 ) -> PreservationCheckResult:
     """Check whether a generated user-photo result preserved protected pixels.
 
-    This function intentionally fails on dimension mismatch instead of resizing
-    provider output. A resized comparison could hide alignment bugs at mask
-    boundaries, which is unsafe for user-photo try-on rollout decisions.
+    Same-aspect full-frame provider outputs may be normalized to the original
+    dimensions before comparison. Different-aspect, tiny, crop-like, and patch
+    outputs fail closed before drift metrics.
     """
 
     active_thresholds = thresholds or PreservationThresholds()
+    metadata = PreservationImageMetadata(
+        original_size=None,
+        mask_size=None,
+        provider_output_size=None,
+        normalized_output_size=None,
+        aspect_ratio_delta=None,
+        size_normalized=False,
+    )
     try:
         base_image = _load_image_copy(source_image_path)
         candidate_image = _load_candidate_bytes(candidate_image_bytes)
@@ -275,15 +346,72 @@ def evaluate_generated_image_preservation(
             message=PRESERVATION_FAILURE_MESSAGE,
             thresholds=active_thresholds,
             drift=None,
+            metadata=metadata,
         )
 
-    if len({base_image.size, candidate_image.size, mask_image.size}) != 1:
+    aspect_ratio_delta = abs(_aspect_ratio(base_image.size) - _aspect_ratio(candidate_image.size))
+    metadata = PreservationImageMetadata(
+        original_size=base_image.size,
+        mask_size=mask_image.size,
+        provider_output_size=candidate_image.size,
+        normalized_output_size=candidate_image.size,
+        aspect_ratio_delta=aspect_ratio_delta,
+        size_normalized=False,
+    )
+
+    if base_image.size != mask_image.size:
         return PreservationCheckResult(
             passes=False,
             reason="size_mismatch",
             message=PRESERVATION_FAILURE_MESSAGE,
             thresholds=active_thresholds,
             drift=None,
+            metadata=PreservationImageMetadata(
+                original_size=base_image.size,
+                mask_size=mask_image.size,
+                provider_output_size=candidate_image.size,
+                normalized_output_size=candidate_image.size,
+                aspect_ratio_delta=aspect_ratio_delta,
+                size_normalized=False,
+                reject_reason="mask_size_mismatch",
+            ),
+        )
+
+    normalized_candidate_bytes: bytes | None = None
+    if candidate_image.size != base_image.size:
+        if not _can_normalize_full_frame_candidate(
+            original_size=base_image.size,
+            candidate_size=candidate_image.size,
+            aspect_ratio_delta=aspect_ratio_delta,
+        ):
+            return PreservationCheckResult(
+                passes=False,
+                reason="size_mismatch",
+                message=PRESERVATION_FAILURE_MESSAGE,
+                thresholds=active_thresholds,
+                drift=None,
+                metadata=PreservationImageMetadata(
+                    original_size=base_image.size,
+                    mask_size=mask_image.size,
+                    provider_output_size=candidate_image.size,
+                    normalized_output_size=candidate_image.size,
+                    aspect_ratio_delta=aspect_ratio_delta,
+                    size_normalized=False,
+                    reject_reason="provider_output_not_full_frame_same_aspect",
+                ),
+            )
+        # Use nearest-neighbor for the guardrail normalization so resizing does
+        # not blur editable clothing pixels into protected regions and create
+        # false protected-region drift at mask boundaries.
+        candidate_image = candidate_image.convert("RGB").resize(base_image.size, Image.Resampling.NEAREST)
+        normalized_candidate_bytes = _image_to_png_bytes(candidate_image)
+        metadata = PreservationImageMetadata(
+            original_size=base_image.size,
+            mask_size=mask_image.size,
+            provider_output_size=metadata.provider_output_size,
+            normalized_output_size=candidate_image.size,
+            aspect_ratio_delta=aspect_ratio_delta,
+            size_normalized=True,
         )
 
     if _looks_like_rectangular_overlay(
@@ -298,6 +426,16 @@ def evaluate_generated_image_preservation(
             message=PRESERVATION_FAILURE_MESSAGE,
             thresholds=active_thresholds,
             drift=None,
+            metadata=PreservationImageMetadata(
+                original_size=metadata.original_size,
+                mask_size=metadata.mask_size,
+                provider_output_size=metadata.provider_output_size,
+                normalized_output_size=metadata.normalized_output_size,
+                aspect_ratio_delta=metadata.aspect_ratio_delta,
+                size_normalized=metadata.size_normalized,
+                reject_reason="rectangular_overlay_detected",
+            ),
+            normalized_candidate_image_bytes=normalized_candidate_bytes,
         )
 
     try:
@@ -314,6 +452,15 @@ def evaluate_generated_image_preservation(
             message=PRESERVATION_FAILURE_MESSAGE,
             thresholds=active_thresholds,
             drift=None,
+            metadata=PreservationImageMetadata(
+                original_size=metadata.original_size,
+                mask_size=metadata.mask_size,
+                provider_output_size=metadata.provider_output_size,
+                normalized_output_size=metadata.normalized_output_size,
+                aspect_ratio_delta=metadata.aspect_ratio_delta,
+                size_normalized=metadata.size_normalized,
+                reject_reason="invalid_preservation_inputs",
+            ),
         )
 
     if drift.editable_pixel_count <= 0:
@@ -323,6 +470,16 @@ def evaluate_generated_image_preservation(
             message=PRESERVATION_FAILURE_MESSAGE,
             thresholds=active_thresholds,
             drift=drift,
+            metadata=PreservationImageMetadata(
+                original_size=metadata.original_size,
+                mask_size=metadata.mask_size,
+                provider_output_size=metadata.provider_output_size,
+                normalized_output_size=metadata.normalized_output_size,
+                aspect_ratio_delta=metadata.aspect_ratio_delta,
+                size_normalized=metadata.size_normalized,
+                reject_reason="empty_editable_mask_region",
+            ),
+            normalized_candidate_image_bytes=normalized_candidate_bytes,
         )
     if drift.protected_pixel_count <= 0:
         return PreservationCheckResult(
@@ -331,6 +488,16 @@ def evaluate_generated_image_preservation(
             message=PRESERVATION_FAILURE_MESSAGE,
             thresholds=active_thresholds,
             drift=drift,
+            metadata=PreservationImageMetadata(
+                original_size=metadata.original_size,
+                mask_size=metadata.mask_size,
+                provider_output_size=metadata.provider_output_size,
+                normalized_output_size=metadata.normalized_output_size,
+                aspect_ratio_delta=metadata.aspect_ratio_delta,
+                size_normalized=metadata.size_normalized,
+                reject_reason="empty_protected_mask_region",
+            ),
+            normalized_candidate_image_bytes=normalized_candidate_bytes,
         )
     if not drift.passes(
         max_mean_delta=active_thresholds.max_mean_delta,
@@ -342,6 +509,16 @@ def evaluate_generated_image_preservation(
             message=PRESERVATION_FAILURE_MESSAGE,
             thresholds=active_thresholds,
             drift=drift,
+            metadata=PreservationImageMetadata(
+                original_size=metadata.original_size,
+                mask_size=metadata.mask_size,
+                provider_output_size=metadata.provider_output_size,
+                normalized_output_size=metadata.normalized_output_size,
+                aspect_ratio_delta=metadata.aspect_ratio_delta,
+                size_normalized=metadata.size_normalized,
+                reject_reason="protected_region_drift",
+            ),
+            normalized_candidate_image_bytes=normalized_candidate_bytes,
         )
 
     return PreservationCheckResult(
@@ -350,4 +527,6 @@ def evaluate_generated_image_preservation(
         message="Generated image preserved protected regions outside the clothing mask.",
         thresholds=active_thresholds,
         drift=drift,
+        metadata=metadata,
+        normalized_candidate_image_bytes=normalized_candidate_bytes,
     )
