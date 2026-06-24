@@ -50,9 +50,25 @@ TRYON_MAX_PROVIDER_ATTEMPTS=1
 TRYON_DEBUG_BUNDLE_ENABLED=false
 ```
 
-The backend keeps the full original photo as the base image and uses the full
-same-size mask. It does not crop the garment, paste a generated patch, or send a
-standalone garment crop as the user-facing result.
+`chatgpt_like_masked_edit` keeps the full original photo as the base image and
+uses the full same-size mask as provider guidance. It does not crop the garment,
+paste a generated patch, or send a standalone garment crop as the user-facing
+result.
+
+`vision_guided_edit` is an alternative staging strategy for complex real-world
+photos where a hard provider mask may hurt quality. It sends the original
+full-frame photo and normalized fabric reference to the provider with a natural
+ChatGPT-like instruction. It does not send a crop-local image, does not composite
+locally, and does not send the preset mask to the provider. The preset mask is
+still prepared and stored so the backend can run the same preservation
+guardrail before exposing any result.
+
+For the first staging experiment with this strategy, use:
+
+```text
+TRYON_PROVIDER_STRATEGY=vision_guided_edit
+TRYON_MAX_PROVIDER_ATTEMPTS=1
+```
 
 `TRYON_MAX_PROVIDER_ATTEMPTS` is clamped to `1..3`. A retry is allowed only after
 the previous provider output failed the preservation guardrail or provider call.

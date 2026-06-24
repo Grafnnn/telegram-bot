@@ -43,6 +43,11 @@ USER_PHOTO_INPUT_MODE_FULL_PHOTO = "full_photo"
 USER_PHOTO_INPUT_MODE_GARMENT_CROP = "garment_crop"
 USER_PHOTO_INPUT_MODES = {USER_PHOTO_INPUT_MODE_FULL_PHOTO, USER_PHOTO_INPUT_MODE_GARMENT_CROP}
 TRYON_PROVIDER_STRATEGY_CHATGPT_LIKE_MASKED_EDIT = "chatgpt_like_masked_edit"
+TRYON_PROVIDER_STRATEGY_VISION_GUIDED_EDIT = "vision_guided_edit"
+TRYON_PROVIDER_STRATEGIES = {
+    TRYON_PROVIDER_STRATEGY_CHATGPT_LIKE_MASKED_EDIT,
+    TRYON_PROVIDER_STRATEGY_VISION_GUIDED_EDIT,
+}
 
 
 def _generation_or_404(db: Session, generation_id: UUID) -> Generation:
@@ -257,6 +262,53 @@ def _build_user_photo_prompt(fabric: Fabric, *, mask_used: bool = False, attempt
     )
 
 
+def _build_vision_guided_user_photo_prompt(
+    fabric: Fabric,
+    *,
+    mask_mode: str | None = None,
+    attempt_index: int = 1,
+) -> str:
+    """Build a natural-language model-led edit prompt for full-frame try-on."""
+
+    details = [
+        (
+            "Using the second image only as the fabric/material reference, edit the first image so that only "
+            "the visible target clothing fabric is changed to that fabric."
+        ),
+        (
+            "Keep the same person, face, hands, phone, pose, body shape, outer clothing, background, lighting, "
+            "camera angle, photo framing, garment folds, shadows and perspective unchanged."
+        ),
+        "Do not create a new person. Do not create a new shirt. Do not paste a rectangle.",
+        "Do not make a collage, sticker, mockup, product photo, crop, or standalone garment.",
+        "Return the full original photo with a realistic fabric change.",
+        "Use the selected catalog fabric reference only as a textile/material guide, not as an object to place.",
+        "Retexture/change fabric on the existing visible clothing while preserving garment structure.",
+        "Selected catalog fabric:",
+        f"Fabric id: {fabric.id}",
+        f"SKU: {fabric.sku}",
+        f"Name: {fabric.name}",
+    ]
+    if fabric.description_for_gpt:
+        details.append(f"Description: {fabric.description_for_gpt}")
+    if fabric.category:
+        details.append(f"Category: {fabric.category}")
+    if fabric.color:
+        details.append(f"Color: {fabric.color}")
+    if mask_mode and "visible_inner_tshirt" in mask_mode:
+        details.append(
+            "The target clothing is the visible inner T-shirt under the open overshirt/jacket. "
+            "The outer overshirt/jacket must remain unchanged. Hands and phone are occluders and must remain "
+            "unchanged. Apply the fabric only where the inner T-shirt is visible."
+        )
+    if attempt_index > 1:
+        details.append(
+            "Retry correction: the previous output was rejected by safety checks. Be more conservative: "
+            "material transfer only, no patch, no rectangle, no new garment, no identity or background changes."
+        )
+    return "\n".join(details)
+
+
 def _build_garment_crop_prompt(fabric: Fabric) -> str:
     details = [
         "Edit only this cropped garment image.",
@@ -340,6 +392,20 @@ def _tryon_max_provider_attempts() -> int:
 
     attempts = get_settings().tryon_max_provider_attempts
     return max(1, min(attempts, 3))
+
+
+def _tryon_provider_strategy() -> str:
+    """Return the selected provider strategy, falling back to the safer masked edit path."""
+
+    strategy = get_settings().tryon_provider_strategy.strip().lower()
+    if strategy in TRYON_PROVIDER_STRATEGIES:
+        return strategy
+    logger.warning(
+        "Unknown user photo try-on strategy=%s; falling back to %s",
+        sanitize_log_message(strategy),
+        TRYON_PROVIDER_STRATEGY_CHATGPT_LIKE_MASKED_EDIT,
+    )
+    return TRYON_PROVIDER_STRATEGY_CHATGPT_LIKE_MASKED_EDIT
 
 
 def _normalized_fabric_reference_for_provider(reference_path: Path, tmp_dir: Path) -> Path:
@@ -509,6 +575,102 @@ def _generate_masked_user_photo_with_attempts(
     raise RuntimeError("User photo try-on failed before provider attempt.")
 
 
+def _generate_vision_guided_user_photo_with_attempts(
+    *,
+    generation: Generation,
+    photo_path: Path,
+    reference_path: Path,
+    fabric: Fabric,
+    mask_path: Path,
+    mask_mode: str | None,
+) -> bytes:
+    """Run model-led full-frame edits without sending the guardrail mask to the provider."""
+
+    strategy = TRYON_PROVIDER_STRATEGY_VISION_GUIDED_EDIT
+    max_attempts = _tryon_max_provider_attempts()
+    attempt_reports: list[dict[str, object]] = []
+    last_error: Exception | None = None
+
+    with TemporaryDirectory(prefix="tryon-reference-") as tmp_dir:
+        normalized_reference_path = _normalized_fabric_reference_for_provider(reference_path, Path(tmp_dir))
+        for attempt in range(1, max_attempts + 1):
+            prompt = _build_vision_guided_user_photo_prompt(
+                fabric,
+                mask_mode=mask_mode,
+                attempt_index=attempt,
+            )
+            generation.prompt = prompt
+            report: dict[str, object] = {
+                "attempt": attempt,
+                "strategy": strategy,
+                "prompt_version": "vision_guided_edit_v1",
+                "has_original_image": True,
+                "has_fabric_reference": True,
+                "fabric_reference_normalized": True,
+                "mask_used": False,
+                "mask_mode": "none",
+                "guardrail_mask_mode": mask_mode,
+                "provider_called": False,
+                "preservation_checked": False,
+                "status": "started",
+            }
+            try:
+                image_bytes = image_generation_service.generate_fabric_on_user_photo(
+                    str(photo_path),
+                    str(normalized_reference_path),
+                    prompt,
+                    mask_image_path=None,
+                )
+                report["provider_called"] = True
+                _ensure_user_photo_preservation_safe(
+                    source_image_path=photo_path,
+                    candidate_image_bytes=image_bytes,
+                    mask_image_path=mask_path,
+                )
+                report["preservation_checked"] = True
+                report["guardrail_status"] = "passed"
+                report["status"] = "passed"
+                attempt_reports.append(report)
+                _write_tryon_debug_report(generation, strategy=strategy, attempts=attempt_reports)
+                return image_bytes
+            except UserPhotoPreservationError as exc:
+                report["preservation_checked"] = True
+                report["guardrail_status"] = "failed"
+                report["guardrail_reason"] = exc.result.reason
+                report["status"] = "failed"
+                report["error"] = safe_exception_summary(exc)
+                attempt_reports.append(report)
+                last_error = exc
+                logger.warning(
+                    "Vision-guided user photo try-on attempt failed generation_id=%s attempt=%s max_attempts=%s error=%s",
+                    generation.id,
+                    attempt,
+                    max_attempts,
+                    safe_exception_summary(exc),
+                )
+                if attempt >= max_attempts:
+                    break
+            except Exception as exc:
+                report["status"] = "failed"
+                report["error"] = safe_exception_summary(exc)
+                attempt_reports.append(report)
+                last_error = exc
+                logger.warning(
+                    "Vision-guided user photo try-on provider failed generation_id=%s attempt=%s max_attempts=%s error=%s",
+                    generation.id,
+                    attempt,
+                    max_attempts,
+                    safe_exception_summary(exc),
+                )
+                if attempt >= max_attempts:
+                    break
+
+    _write_tryon_debug_report(generation, strategy=strategy, attempts=attempt_reports)
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Vision-guided user photo try-on failed before provider attempt.")
+
+
 @router.post(
     "/catalog-style",
     response_model=GenerationRead,
@@ -665,13 +827,24 @@ async def _create_user_photo_generation(
                 mask_image_path=None,
             )
         elif mask_result is not None:
-            image_bytes = _generate_masked_user_photo_with_attempts(
-                generation=generation,
-                photo_path=photo_path,
-                reference_path=reference_path,
-                fabric=fabric,
-                mask_path=mask_result.mask_path,
-            )
+            strategy = _tryon_provider_strategy()
+            if strategy == TRYON_PROVIDER_STRATEGY_VISION_GUIDED_EDIT:
+                image_bytes = _generate_vision_guided_user_photo_with_attempts(
+                    generation=generation,
+                    photo_path=photo_path,
+                    reference_path=reference_path,
+                    fabric=fabric,
+                    mask_path=mask_result.mask_path,
+                    mask_mode=mask_result.mode,
+                )
+            else:
+                image_bytes = _generate_masked_user_photo_with_attempts(
+                    generation=generation,
+                    photo_path=photo_path,
+                    reference_path=reference_path,
+                    fabric=fabric,
+                    mask_path=mask_result.mask_path,
+                )
         else:
             image_bytes = image_generation_service.generate_fabric_on_user_photo(
                 str(photo_path),
