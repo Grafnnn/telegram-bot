@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 from PIL import Image, ImageDraw
@@ -41,6 +42,14 @@ def _png_bytes(image: Image.Image) -> bytes:
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def _write_source_and_mask(tmp_path, base: Image.Image, mask: Image.Image) -> tuple[Path, Path]:
+    base_path = tmp_path / "base.png"
+    mask_path = tmp_path / "mask.png"
+    base.save(base_path, format="PNG")
+    mask.save(mask_path, format="PNG")
+    return base_path, mask_path
 
 
 def test_outside_mask_drift_ignores_editable_clothing_region() -> None:
@@ -197,13 +206,73 @@ def test_generated_image_preservation_fails_size_mismatch(tmp_path) -> None:
 
     result = evaluate_generated_image_preservation(
         source_image_path=base_path,
-        candidate_image_bytes=_png_bytes(Image.new("RGB", (32, 32), color=(255, 0, 0))),
+        candidate_image_bytes=_png_bytes(Image.new("RGB", (96, 64), color=(255, 0, 0))),
         mask_image_path=mask_path,
     )
 
     assert result.passes is False
     assert result.reason == "size_mismatch"
     assert result.drift is None
+    assert result.original_size == (64, 64)
+    assert result.provider_output_size == (96, 64)
+    assert result.mask_size == (64, 64)
+    assert result.aspect_ratio_delta is not None
+    assert result.aspect_ratio_delta > 0
+    assert result.size_normalized is False
+    assert result.normalized_size is None
+
+
+def test_generated_image_preservation_normalizes_same_aspect_provider_output(tmp_path) -> None:
+    base = Image.new("RGB", (64, 64), (100, 100, 100))
+    mask = _polygon_shirt_mask()
+    base_path, mask_path = _write_source_and_mask(tmp_path, base, mask)
+    candidate = base.resize((128, 128), Image.Resampling.NEAREST).convert("RGB")
+    scaled_mask = mask.resize((128, 128), Image.Resampling.NEAREST)
+    alpha = scaled_mask.getchannel("A")
+    pixels = candidate.load()
+    for y in range(candidate.height):
+        for x in range(candidate.width):
+            if alpha.getpixel((x, y)) < 128:
+                pixels[x, y] = (30, 170, 70)
+
+    result = evaluate_generated_image_preservation(
+        source_image_path=base_path,
+        candidate_image_bytes=_png_bytes(candidate),
+        mask_image_path=mask_path,
+        thresholds=PreservationThresholds(max_mean_delta=1, max_changed_pixel_percent=1, pixel_delta_threshold=8),
+    )
+
+    assert result.passes is True
+    assert result.reason is None
+    assert result.original_size == (64, 64)
+    assert result.provider_output_size == (128, 128)
+    assert result.mask_size == (64, 64)
+    assert result.aspect_ratio_delta == 0
+    assert result.size_normalized is True
+    assert result.normalized_size == (64, 64)
+    assert result.normalized_candidate_image_bytes is not None
+    with Image.open(BytesIO(result.normalized_candidate_image_bytes)) as normalized:
+        assert normalized.size == (64, 64)
+
+
+def test_generated_image_preservation_rectangular_overlay_still_fails_after_normalization(tmp_path) -> None:
+    base = Image.new("RGB", (64, 64), (100, 100, 100))
+    mask = _polygon_shirt_mask()
+    base_path, mask_path = _write_source_and_mask(tmp_path, base, mask)
+    candidate = base.resize((128, 128), Image.Resampling.NEAREST).convert("RGB")
+    ImageDraw.Draw(candidate).rectangle((38, 40, 90, 92), fill=(20, 180, 40))
+
+    result = evaluate_generated_image_preservation(
+        source_image_path=base_path,
+        candidate_image_bytes=_png_bytes(candidate),
+        mask_image_path=mask_path,
+        thresholds=PreservationThresholds(max_mean_delta=1, max_changed_pixel_percent=1, pixel_delta_threshold=8),
+    )
+
+    assert result.passes is False
+    assert result.reason == "rectangular_overlay_detected"
+    assert result.size_normalized is True
+    assert result.normalized_size == (64, 64)
 
 
 def test_generated_image_preservation_fails_empty_editable_region(tmp_path) -> None:

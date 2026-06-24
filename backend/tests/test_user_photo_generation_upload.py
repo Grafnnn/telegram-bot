@@ -586,6 +586,71 @@ def test_user_photo_generation_vision_guided_edit_rejects_guardrail_failure_with
     assert not any((get_settings().upload_dir / "generations").iterdir())
 
 
+def test_user_photo_generation_saves_normalized_guardrail_output(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    monkeypatch.setenv("TRYON_PROVIDER_STRATEGY", "vision_guided_edit")
+    get_settings.cache_clear()
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+    ) -> bytes:
+        assert mask_image_path is None
+        return _png_bytes(size=(600, 600), color=(20, 120, 180))
+
+    normalized_bytes = _png_bytes(size=(300, 300), color=(40, 140, 200))
+
+    def fake_preservation_safe(
+        *,
+        source_image_path: Path,
+        candidate_image_bytes: bytes,
+        mask_image_path: Path,
+    ) -> PreservationCheckResult:
+        return PreservationCheckResult(
+            passes=True,
+            reason=None,
+            message="ok",
+            thresholds=PreservationThresholds(),
+            original_size=(300, 300),
+            provider_output_size=(600, 600),
+            mask_size=(300, 300),
+            aspect_ratio_delta=0.0,
+            size_normalized=True,
+            normalized_size=(300, 300),
+            normalized_candidate_image_bytes=normalized_bytes,
+        )
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+    monkeypatch.setattr(generation_routes, "_ensure_user_photo_preservation_safe", fake_preservation_safe)
+
+    try:
+        response = _post_user_photo(
+            client,
+            fabric_id,
+            PNG_300,
+            "image/png",
+            BOT_HEADERS,
+            mask_preset=MASK_PRESET_CENTRAL_UPPER_GARMENT,
+        )
+    finally:
+        monkeypatch.delenv("TRYON_PROVIDER_STRATEGY", raising=False)
+        get_settings.cache_clear()
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["status"] == "completed"
+    result_path = get_settings().upload_dir / payload["result_image_url"].removeprefix("/uploads/")
+    with Image.open(result_path) as result_image:
+        assert result_image.size == (300, 300)
+
+
 def test_user_photo_generation_vision_guided_edit_retries_until_guardrail_pass(
     client: TestClient,
     monkeypatch,
@@ -614,7 +679,7 @@ def test_user_photo_generation_vision_guided_edit_retries_until_guardrail_pass(
         source_image_path: Path,
         candidate_image_bytes: bytes,
         mask_image_path: Path,
-    ) -> None:
+    ) -> PreservationCheckResult | None:
         nonlocal preservation_calls
         preservation_calls += 1
         if preservation_calls == 1:
@@ -625,6 +690,7 @@ def test_user_photo_generation_vision_guided_edit_retries_until_guardrail_pass(
                 thresholds=PreservationThresholds(),
             )
             raise UserPhotoPreservationError(result)
+        return None
 
     monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
     monkeypatch.setattr(generation_routes, "_ensure_user_photo_preservation_safe", fake_preservation_safe)
@@ -724,6 +790,12 @@ def test_user_photo_generation_vision_guided_debug_metadata_is_sanitized(
             reason="rectangular_overlay_detected",
             message=PRESERVATION_FAILURE_MESSAGE,
             thresholds=PreservationThresholds(),
+            original_size=(300, 300),
+            provider_output_size=(1024, 1024),
+            mask_size=(300, 300),
+            aspect_ratio_delta=0.0,
+            size_normalized=False,
+            normalized_size=None,
         )
         raise UserPhotoPreservationError(result)
 
@@ -757,6 +829,15 @@ def test_user_photo_generation_vision_guided_debug_metadata_is_sanitized(
     assert attempt["mask_mode"] == "none"
     assert attempt["guardrail_mask_mode"] == f"preset:{MASK_PRESET_CENTRAL_UPPER_GARMENT}"
     assert attempt["guardrail_reason"] == "rectangular_overlay_detected"
+    assert attempt["guardrail_metadata"] == {
+        "original_size": [300, 300],
+        "provider_output_size": [1024, 1024],
+        "mask_size": [300, 300],
+        "aspect_ratio_delta": 0.0,
+        "size_normalized": False,
+        "normalized_size": None,
+        "fail_reason": "rectangular_overlay_detected",
+    }
     serialized = json.dumps(report, ensure_ascii=False)
     assert "base64" not in serialized.lower()
     assert "OPENAI_API_KEY" not in serialized
