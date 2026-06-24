@@ -20,6 +20,7 @@ from app.models.telegram_user import TelegramUser
 from app.services.mask_service import (
     INVALID_MASK_PRESET_MESSAGE,
     MASK_PRESET_CENTRAL_UPPER_GARMENT,
+    MASK_PRESET_VISIBLE_INNER_TSHIRT,
     MASK_PROVIDER_NOT_CONFIGURED_MESSAGE,
     STRICT_MASK_REQUIRED_MESSAGE,
     calculate_edit_coverage,
@@ -37,6 +38,33 @@ def _png_bytes(size: tuple[int, int] = (1, 1), color: tuple[int, int, int] = (20
 
 PNG_1X1 = _png_bytes()
 PNG_300 = _png_bytes(size=(300, 300))
+
+
+def _open_overshirt_source_bytes(size: tuple[int, int] = (300, 300)) -> bytes:
+    buffer = BytesIO()
+    image = Image.new("RGB", size, color=(35, 42, 48))
+    draw = ImageDraw.Draw(image)
+    width, height = size
+    # Background, head, hands, and a saturated overshirt should stay protected.
+    draw.ellipse((120, 18, 180, 78), fill=(190, 145, 115))
+    draw.rectangle((55, 95, 118, 236), fill=(22, 140, 72))
+    draw.rectangle((182, 95, 245, 236), fill=(22, 140, 72))
+    draw.rectangle((70, 180, 108, 230), fill=(190, 145, 115))
+    draw.rectangle((192, 180, 230, 230), fill=(190, 145, 115))
+    # Light neutral inner T-shirt, intentionally central.
+    draw.polygon(
+        [
+            (124, 104),
+            (176, 104),
+            (191, 160),
+            (184, 232),
+            (116, 232),
+            (109, 160),
+        ],
+        fill=(226, 224, 216),
+    )
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def _mask_bytes(size: tuple[int, int] = (300, 300), box: tuple[int, int, int, int] = (75, 75, 225, 225)) -> bytes:
@@ -377,6 +405,151 @@ def test_user_photo_generation_preset_mask_calls_provider_with_mask(
     assert admin_generation["id"] == payload["id"]
     assert admin_generation["telegram_user"]["telegram_id"] == telegram_id
     assert admin_generation["mask_image_url"] == payload["mask_image_url"]
+
+
+def test_user_photo_generation_visible_inner_tshirt_preset_uses_narrow_mask_and_normalized_reference(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    captured: dict[str, str | None] = {}
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+    ) -> bytes:
+        captured["fabric_reference_path"] = fabric_reference_path
+        captured["mask_image_path"] = mask_image_path
+        captured["prompt"] = prompt
+        assert mask_image_path is not None
+        with Image.open(fabric_reference_path) as reference:
+            captured["fabric_reference_size"] = f"{reference.width}x{reference.height}"
+        with Image.open(mask_image_path) as mask:
+            alpha = mask.convert("RGBA").getchannel("A")
+            # Inner T-shirt center is editable; saturated overshirt, face, and hand regions are protected.
+            assert alpha.getpixel((150, 150)) < 128
+            assert alpha.getpixel((85, 150)) >= 128
+            assert alpha.getpixel((150, 45)) >= 128
+            assert alpha.getpixel((90, 205)) >= 128
+        return _provider_output_changing_only_mask(user_photo_path, mask_image_path)
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+
+    response = _post_user_photo(
+        client,
+        fabric_id,
+        _open_overshirt_source_bytes(),
+        "image/png",
+        BOT_HEADERS,
+        mask_preset=MASK_PRESET_VISIBLE_INNER_TSHIRT,
+    )
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert captured["mask_image_path"]
+    assert Path(captured["fabric_reference_path"] or "").name == "fabric_reference_normalized.png"
+    assert captured["fabric_reference_size"] == "1024x1024"
+    assert "fabric_reference_normalized.png" not in (captured["prompt"] or "")
+    persisted_mask_path = get_settings().upload_dir / payload["mask_image_url"].removeprefix("/uploads/")
+    coverage = calculate_edit_coverage(persisted_mask_path)
+    assert 3.0 <= coverage <= 20.0
+
+
+def test_user_photo_generation_retries_masked_edit_once_after_preservation_failure(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    calls: list[str] = []
+    monkeypatch.setenv("TRYON_MAX_PROVIDER_ATTEMPTS", "2")
+    get_settings.cache_clear()
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+    ) -> bytes:
+        assert mask_image_path is not None
+        calls.append(prompt)
+        if len(calls) == 1:
+            return _provider_output_changing_protected_region(user_photo_path, mask_image_path)
+        return _provider_output_changing_only_mask(user_photo_path, mask_image_path)
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+
+    try:
+        response = _post_user_photo(
+            client,
+            fabric_id,
+            PNG_300,
+            "image/png",
+            BOT_HEADERS,
+            mask_preset=MASK_PRESET_CENTRAL_UPPER_GARMENT,
+        )
+    finally:
+        monkeypatch.delenv("TRYON_MAX_PROVIDER_ATTEMPTS", raising=False)
+        get_settings.cache_clear()
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["result_image_url"].startswith("/uploads/generations/")
+    assert len(calls) == 2
+    assert "Retry correction" not in calls[0]
+    assert "Retry correction" in calls[1]
+
+
+def test_user_photo_generation_fails_after_bounded_masked_edit_attempts(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    calls = 0
+    monkeypatch.setenv("TRYON_MAX_PROVIDER_ATTEMPTS", "2")
+    get_settings.cache_clear()
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+    ) -> bytes:
+        nonlocal calls
+        calls += 1
+        assert mask_image_path is not None
+        return _provider_output_changing_protected_region(user_photo_path, mask_image_path)
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+
+    try:
+        response = _post_user_photo(
+            client,
+            fabric_id,
+            PNG_300,
+            "image/png",
+            BOT_HEADERS,
+            mask_preset=MASK_PRESET_CENTRAL_UPPER_GARMENT,
+        )
+    finally:
+        monkeypatch.delenv("TRYON_MAX_PROVIDER_ATTEMPTS", raising=False)
+        get_settings.cache_clear()
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["status"] == "failed"
+    assert payload["result_image_url"] is None
+    assert calls == 2
+    assert "сохранить исходное фото" in payload["error_message"]
 
 
 def test_user_photo_generation_preset_mask_rejects_provider_protected_region_drift(

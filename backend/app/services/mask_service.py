@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile, status
-from PIL import Image, ImageDraw, UnidentifiedImageError
+from PIL import Image, ImageDraw, ImageFilter, UnidentifiedImageError
 
 from app.config import get_settings
 from app.services.storage_service import resolve_upload_path
@@ -16,7 +16,13 @@ from app.services.storage_service import resolve_upload_path
 MASK_FOLDER = "user-photo-masks"
 EDITABLE_ALPHA_THRESHOLD = 128
 MASK_PRESET_CENTRAL_UPPER_GARMENT = "central_upper_garment"
-ALLOWED_MASK_PRESETS = {MASK_PRESET_CENTRAL_UPPER_GARMENT}
+MASK_PRESET_VISIBLE_INNER_TSHIRT = "visible_inner_tshirt"
+MASK_PRESET_OPEN_OVERSHIRT_INNER_GARMENT = "open_overshirt_inner_garment"
+ALLOWED_MASK_PRESETS = {
+    MASK_PRESET_CENTRAL_UPPER_GARMENT,
+    MASK_PRESET_VISIBLE_INNER_TSHIRT,
+    MASK_PRESET_OPEN_OVERSHIRT_INNER_GARMENT,
+}
 GENERATED_MASK_LEFT_RATIO = 0.34
 GENERATED_MASK_TOP_RATIO = 0.36
 GENERATED_MASK_RIGHT_RATIO = 0.66
@@ -204,10 +210,7 @@ def _mock_mask_bytes(base_image_path: Path) -> bytes:
     return buffer.getvalue()
 
 
-def _preset_mask_bytes(base_image_path: Path, preset: str) -> bytes:
-    if preset != MASK_PRESET_CENTRAL_UPPER_GARMENT:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, INVALID_MASK_PRESET_MESSAGE)
-
+def _central_upper_garment_mask(base_image_path: Path) -> Image.Image:
     width, height = _load_base_size(base_image_path)
     if width < 160 or height < 160:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "User photo is too small for preset mask editing.")
@@ -229,6 +232,68 @@ def _preset_mask_bytes(base_image_path: Path, preset: str) -> bytes:
         (left, int(height * 0.50)),
     ]
     draw.polygon(points, fill=(0, 0, 0, 0))
+    return mask
+
+
+def _visible_inner_tshirt_mask(base_image_path: Path) -> Image.Image:
+    """Create a conservative mask for a light inner T-shirt under an open overshirt.
+
+    This deterministic preset is intentionally narrow. It targets a common
+    mirror-selfie case where a light inner garment is visible in the center and
+    a darker/colorful overshirt, hands, phone, face, and background must stay
+    protected. Low-confidence photos fail later through normal mask coverage
+    validation instead of falling back to a broad rectangle.
+    """
+
+    try:
+        with Image.open(_safe_existing_upload_path(base_image_path)) as image:
+            rgb = image.convert("RGB")
+    except (OSError, SyntaxError, UnidentifiedImageError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "User photo file is not readable.") from exc
+
+    width, height = rgb.size
+    if width < 160 or height < 160:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "User photo is too small for preset mask editing.")
+
+    alpha = Image.new("L", (width, height), color=255)
+    pixels = rgb.load()
+    left = int(width * 0.30)
+    right = int(width * 0.70)
+    top = int(height * 0.34)
+    bottom = int(height * 0.74)
+    center_x = width / 2
+    half_width = max(1, (right - left) / 2)
+
+    for y in range(top, bottom):
+        y_progress = (y - top) / max(1, bottom - top)
+        # Slight hourglass shape: avoid arms/open overshirt at shoulders and lower sides.
+        allowed_half_ratio = 0.42 + 0.26 * min(1.0, y_progress * 1.4)
+        for x in range(left, right):
+            normalized_x = abs(x - center_x) / half_width
+            if normalized_x > allowed_half_ratio:
+                continue
+            red, green, blue = pixels[x, y]
+            brightness = (red + green + blue) / 3
+            chroma = max(red, green, blue) - min(red, green, blue)
+            # Target light/neutral fabric. This deliberately excludes saturated green/blue overshirts,
+            # skin, dark phones, and most backgrounds.
+            if brightness >= 138 and chroma <= 78 and red >= 120 and green >= 120 and blue >= 112:
+                alpha.putpixel((x, y), 0)
+
+    # Expand tiny gaps inside the detected fabric, then restore a little edge softness.
+    alpha = alpha.filter(ImageFilter.MinFilter(3)).filter(ImageFilter.MaxFilter(3))
+    mask = Image.new("RGBA", (width, height), color=(0, 0, 0, 255))
+    mask.putalpha(alpha)
+    return mask
+
+
+def _preset_mask_bytes(base_image_path: Path, preset: str) -> bytes:
+    if preset == MASK_PRESET_CENTRAL_UPPER_GARMENT:
+        mask = _central_upper_garment_mask(base_image_path)
+    elif preset in {MASK_PRESET_VISIBLE_INNER_TSHIRT, MASK_PRESET_OPEN_OVERSHIRT_INNER_GARMENT}:
+        mask = _visible_inner_tshirt_mask(base_image_path)
+    else:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, INVALID_MASK_PRESET_MESSAGE)
 
     buffer = BytesIO()
     mask.save(buffer, format="PNG")
