@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from io import BytesIO
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -24,6 +25,12 @@ from app.services.mask_service import (
     MASK_PROVIDER_NOT_CONFIGURED_MESSAGE,
     STRICT_MASK_REQUIRED_MESSAGE,
     calculate_edit_coverage,
+)
+from app.services.preservation_service import (
+    PRESERVATION_FAILURE_MESSAGE,
+    PreservationCheckResult,
+    PreservationThresholds,
+    UserPhotoPreservationError,
 )
 
 BOT_HEADERS = {"X-Bot-Token": "test_bot_internal_token"}
@@ -458,6 +465,303 @@ def test_user_photo_generation_visible_inner_tshirt_preset_uses_narrow_mask_and_
     persisted_mask_path = get_settings().upload_dir / payload["mask_image_url"].removeprefix("/uploads/")
     coverage = calculate_edit_coverage(persisted_mask_path)
     assert 3.0 <= coverage <= 20.0
+
+
+def test_user_photo_generation_vision_guided_edit_sends_full_photo_and_reference_without_provider_mask(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    captured: dict[str, str | None] = {}
+    monkeypatch.setenv("TRYON_PROVIDER_STRATEGY", "vision_guided_edit")
+    get_settings.cache_clear()
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+    ) -> bytes:
+        captured["user_photo_path"] = user_photo_path
+        captured["fabric_reference_path"] = fabric_reference_path
+        captured["prompt"] = prompt
+        captured["mask_image_path"] = mask_image_path
+        with Image.open(user_photo_path) as provider_input:
+            captured["provider_input_size"] = f"{provider_input.width}x{provider_input.height}"
+        with Image.open(fabric_reference_path) as reference:
+            captured["fabric_reference_size"] = f"{reference.width}x{reference.height}"
+        return PNG_300
+
+    preservation_called: dict[str, str | None] = {}
+
+    def fake_preservation_safe(
+        *,
+        source_image_path: Path,
+        candidate_image_bytes: bytes,
+        mask_image_path: Path,
+    ) -> None:
+        preservation_called["source_image_path"] = str(source_image_path)
+        preservation_called["mask_image_path"] = str(mask_image_path)
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+    monkeypatch.setattr(generation_routes, "_ensure_user_photo_preservation_safe", fake_preservation_safe)
+
+    try:
+        response = _post_user_photo(
+            client,
+            fabric_id,
+            _open_overshirt_source_bytes(),
+            "image/png",
+            BOT_HEADERS,
+            mask_preset=MASK_PRESET_VISIBLE_INNER_TSHIRT,
+        )
+    finally:
+        monkeypatch.delenv("TRYON_PROVIDER_STRATEGY", raising=False)
+        get_settings.cache_clear()
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["result_image_url"].startswith("/uploads/generations/")
+    assert payload["mask_image_url"].startswith("/uploads/user-photo-masks/")
+    assert captured["mask_image_path"] is None
+    assert Path(captured["user_photo_path"] or "").parent.name == "user-photos"
+    assert Path(captured["fabric_reference_path"] or "").name == "fabric_reference_normalized.png"
+    assert captured["provider_input_size"] == "300x300"
+    assert captured["fabric_reference_size"] == "1024x1024"
+    assert preservation_called["mask_image_path"]
+    prompt = captured["prompt"] or ""
+    assert "edit the first image" in prompt
+    assert "fabric/material reference" in prompt
+    assert "visible inner T-shirt under the open overshirt/jacket" in prompt
+    assert "Do not create a new person" in prompt
+    assert "Do not create a new shirt" in prompt
+    assert "Do not paste a rectangle" in prompt
+    assert "collage" in prompt
+    assert "mockup" in prompt
+    assert "Return the full original photo" in prompt
+
+
+def test_user_photo_generation_vision_guided_edit_rejects_guardrail_failure_without_result(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    monkeypatch.setenv("TRYON_PROVIDER_STRATEGY", "vision_guided_edit")
+    get_settings.cache_clear()
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+    ) -> bytes:
+        assert mask_image_path is None
+        return _provider_output_changing_protected_region(user_photo_path, mask_image_path or user_photo_path)
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+
+    try:
+        response = _post_user_photo(
+            client,
+            fabric_id,
+            PNG_300,
+            "image/png",
+            BOT_HEADERS,
+            mask_preset=MASK_PRESET_CENTRAL_UPPER_GARMENT,
+        )
+    finally:
+        monkeypatch.delenv("TRYON_PROVIDER_STRATEGY", raising=False)
+        get_settings.cache_clear()
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["status"] == "failed"
+    assert payload["result_image_url"] is None
+    assert "сохранить исходное фото" in payload["error_message"]
+    assert not any((get_settings().upload_dir / "generations").iterdir())
+
+
+def test_user_photo_generation_vision_guided_edit_retries_until_guardrail_pass(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    calls: list[str] = []
+    preservation_calls = 0
+    monkeypatch.setenv("TRYON_PROVIDER_STRATEGY", "vision_guided_edit")
+    monkeypatch.setenv("TRYON_MAX_PROVIDER_ATTEMPTS", "2")
+    get_settings.cache_clear()
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+    ) -> bytes:
+        assert mask_image_path is None
+        calls.append(prompt)
+        return PNG_300
+
+    def fake_preservation_safe(
+        *,
+        source_image_path: Path,
+        candidate_image_bytes: bytes,
+        mask_image_path: Path,
+    ) -> None:
+        nonlocal preservation_calls
+        preservation_calls += 1
+        if preservation_calls == 1:
+            result = PreservationCheckResult(
+                passes=False,
+                reason="rectangular_overlay_detected",
+                message=PRESERVATION_FAILURE_MESSAGE,
+                thresholds=PreservationThresholds(),
+            )
+            raise UserPhotoPreservationError(result)
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+    monkeypatch.setattr(generation_routes, "_ensure_user_photo_preservation_safe", fake_preservation_safe)
+
+    try:
+        response = _post_user_photo(
+            client,
+            fabric_id,
+            PNG_300,
+            "image/png",
+            BOT_HEADERS,
+            mask_preset=MASK_PRESET_CENTRAL_UPPER_GARMENT,
+        )
+    finally:
+        monkeypatch.delenv("TRYON_PROVIDER_STRATEGY", raising=False)
+        monkeypatch.delenv("TRYON_MAX_PROVIDER_ATTEMPTS", raising=False)
+        get_settings.cache_clear()
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert len(calls) == 2
+    assert "Retry correction" not in calls[0]
+    assert "Retry correction" in calls[1]
+    assert preservation_calls == 2
+
+
+def test_user_photo_generation_unknown_tryon_strategy_falls_back_to_masked_edit(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    captured: dict[str, str | None] = {}
+    monkeypatch.setenv("TRYON_PROVIDER_STRATEGY", "not-a-real-strategy")
+    get_settings.cache_clear()
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+    ) -> bytes:
+        captured["mask_image_path"] = mask_image_path
+        assert mask_image_path is not None
+        return _provider_output_changing_only_mask(user_photo_path, mask_image_path)
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+
+    try:
+        response = _post_user_photo(
+            client,
+            fabric_id,
+            PNG_300,
+            "image/png",
+            BOT_HEADERS,
+            mask_preset=MASK_PRESET_CENTRAL_UPPER_GARMENT,
+        )
+    finally:
+        monkeypatch.delenv("TRYON_PROVIDER_STRATEGY", raising=False)
+        get_settings.cache_clear()
+
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "completed"
+    assert captured["mask_image_path"]
+
+
+def test_user_photo_generation_vision_guided_debug_metadata_is_sanitized(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    monkeypatch.setenv("TRYON_PROVIDER_STRATEGY", "vision_guided_edit")
+    monkeypatch.setenv("TRYON_DEBUG_BUNDLE_ENABLED", "true")
+    get_settings.cache_clear()
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+    ) -> bytes:
+        assert mask_image_path is None
+        return PNG_300
+
+    def fake_preservation_safe(
+        *,
+        source_image_path: Path,
+        candidate_image_bytes: bytes,
+        mask_image_path: Path,
+    ) -> None:
+        result = PreservationCheckResult(
+            passes=False,
+            reason="rectangular_overlay_detected",
+            message=PRESERVATION_FAILURE_MESSAGE,
+            thresholds=PreservationThresholds(),
+        )
+        raise UserPhotoPreservationError(result)
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+    monkeypatch.setattr(generation_routes, "_ensure_user_photo_preservation_safe", fake_preservation_safe)
+
+    try:
+        response = _post_user_photo(
+            client,
+            fabric_id,
+            PNG_300,
+            "image/png",
+            BOT_HEADERS,
+            mask_preset=MASK_PRESET_CENTRAL_UPPER_GARMENT,
+        )
+    finally:
+        monkeypatch.delenv("TRYON_PROVIDER_STRATEGY", raising=False)
+        monkeypatch.delenv("TRYON_DEBUG_BUNDLE_ENABLED", raising=False)
+        get_settings.cache_clear()
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["status"] == "failed"
+    report_path = get_settings().upload_dir / "tryon-debug" / f"{payload['id']}.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    [attempt] = report["attempts"]
+    assert report["strategy"] == "vision_guided_edit"
+    assert attempt["strategy"] == "vision_guided_edit"
+    assert attempt["prompt_version"] == "vision_guided_edit_v1"
+    assert attempt["mask_used"] is False
+    assert attempt["mask_mode"] == "none"
+    assert attempt["guardrail_mask_mode"] == f"preset:{MASK_PRESET_CENTRAL_UPPER_GARMENT}"
+    assert attempt["guardrail_reason"] == "rectangular_overlay_detected"
+    serialized = json.dumps(report, ensure_ascii=False)
+    assert "base64" not in serialized.lower()
+    assert "OPENAI_API_KEY" not in serialized
+    assert "BOT_INTERNAL_TOKEN" not in serialized
+    assert "data:image" not in serialized
 
 
 def test_user_photo_generation_retries_masked_edit_once_after_preservation_failure(
