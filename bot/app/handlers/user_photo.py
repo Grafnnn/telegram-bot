@@ -65,12 +65,12 @@ TRY_ON_GUIDED_INTRO_MESSAGE = (
 )
 TRY_ON_PHOTO_MASK_PRESET_MESSAGE = (
     "Отметьте область одежды для замены ткани. Сейчас доступен безопасный режим: "
-    "ответьте одним сообщением с номером зоны или выберите весь видимый верх/куртку/рубашку, "
-    "если она занимает центральную часть кадра."
+    "ответьте одним сообщением с номером зоны или выберите видимую футболку/внутреннюю одежду "
+    "под расстёгнутой рубашкой."
 )
 TRY_ON_PRESET_VALIDATION_MESSAGE = (
-    "Не удалось безопасно заменить ткань на этом фото. Попробуйте фото, где верхняя одежда хорошо видна "
-    "по центру кадра, или выберите другую ткань."
+    "Не удалось безопасно заменить ткань на этом фото. Попробуйте фото, где видимая футболка или внутренняя "
+    "одежда хорошо освещена по центру кадра, или выберите другую ткань."
 )
 TRY_ON_DISABLED_MESSAGE = (
     "Примерка на пользовательском фото временно отключена: мы не будем запускать режим, "
@@ -91,6 +91,8 @@ TRY_ON_FULL_PHOTO_UNSUPPORTED_MESSAGE = (
 INPUT_MODE_FULL_PHOTO = "full_photo"
 INPUT_MODE_GARMENT_CROP = "garment_crop"
 MASK_PRESET_CENTRAL_UPPER_GARMENT = "central_upper_garment"
+MASK_PRESET_VISIBLE_INNER_TSHIRT = "visible_inner_tshirt"
+MASK_PRESET_DEFAULT = MASK_PRESET_VISIBLE_INNER_TSHIRT
 
 
 def backend_client() -> BackendAPIClient:
@@ -462,13 +464,13 @@ async def handle_mask_preset_text(message: Message, state: FSMContext) -> None:
         await state.set_state(TryOnPhotoStates.waiting_for_photo)
         await message.answer("Загрузите фото ещё раз.\n" + PHOTO_SAFETY_COPY)
         return
-    await state.update_data(mask_preset=MASK_PRESET_CENTRAL_UPPER_GARMENT)
+    await state.update_data(mask_preset=MASK_PRESET_DEFAULT)
     await _generate_from_photo(
         message,
         state,
         str(file_id),
         input_mode=INPUT_MODE_FULL_PHOTO,
-        mask_preset=MASK_PRESET_CENTRAL_UPPER_GARMENT,
+        mask_preset=MASK_PRESET_DEFAULT,
     )
 
 
@@ -550,7 +552,9 @@ async def regenerate_try_on(callback: CallbackQuery, state: FSMContext) -> None:
     )
 
 
-@router.callback_query(lambda callback: callback.data == "try_on:preset:central_upper_garment")
+@router.callback_query(
+    lambda callback: callback.data in {"try_on:preset:central_upper_garment", "try_on:preset:visible_inner_tshirt"}
+)
 async def use_central_upper_garment_preset(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer("Запускаю безопасную замену выбранной области.", show_alert=False)
     data = await state.get_data()
@@ -560,13 +564,18 @@ async def use_central_upper_garment_preset(callback: CallbackQuery, state: FSMCo
         if callback.message:
             await callback.message.answer("Загрузите фото ещё раз.\n" + PHOTO_SAFETY_COPY)
         return
-    await state.update_data(mask_preset=MASK_PRESET_CENTRAL_UPPER_GARMENT)
+    selected_preset = (
+        MASK_PRESET_CENTRAL_UPPER_GARMENT
+        if callback.data == "try_on:preset:central_upper_garment"
+        else MASK_PRESET_DEFAULT
+    )
+    await state.update_data(mask_preset=selected_preset)
     await _generate_from_photo(
         callback.message,
         state,
         str(file_id),
         input_mode=INPUT_MODE_FULL_PHOTO,
-        mask_preset=MASK_PRESET_CENTRAL_UPPER_GARMENT,
+        mask_preset=selected_preset,
     )
 
 

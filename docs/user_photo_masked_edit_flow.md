@@ -10,12 +10,18 @@ mockup.
 The `/api/generations/user-photo` flow sends the provider:
 
 - the original uploaded user photo as the base image;
-- the selected fabric texture/reference image;
+- the selected fabric texture/reference image normalized into a square provider
+  swatch;
 - a PNG edit mask with the same width and height as the original photo;
 - a strict prompt that asks for a full-frame edit of the original photo only.
 
 The provider output is accepted only as a full-frame edited image. Crop-only
 provider outputs and local crop composites are not valid user-facing results.
+
+This follows the current OpenAI Images API contract for image edits: the edit
+request modifies an existing image and may include image inputs plus an edit
+mask. Use the Images API for this single-shot edit path; conversational or
+multi-turn editing belongs in a separate Responses API design gate.
 
 ## Mask Contract
 
@@ -28,6 +34,36 @@ The edit mask uses the OpenAI image-edit convention used by the backend:
 
 If the backend cannot prepare a usable mask, generation fails closed before the
 provider call.
+
+The default Telegram preset is intentionally narrow: it targets a visible light
+inner T-shirt under an open shirt/overshirt and protects saturated overshirts,
+skin, phone, face, hands, and background. The older central upper-garment preset
+is retained only for backward-compatible callbacks/tests.
+
+## Provider Strategy
+
+Default runtime strategy:
+
+```text
+TRYON_PROVIDER_STRATEGY=chatgpt_like_masked_edit
+TRYON_MAX_PROVIDER_ATTEMPTS=1
+TRYON_DEBUG_BUNDLE_ENABLED=false
+```
+
+The backend keeps the full original photo as the base image and uses the full
+same-size mask. It does not crop the garment, paste a generated patch, or send a
+standalone garment crop as the user-facing result.
+
+`TRYON_MAX_PROVIDER_ATTEMPTS` is clamped to `1..3`. A retry is allowed only after
+the previous provider output failed the preservation guardrail or provider call.
+Retry prompts become more conservative; they do not disable preservation checks.
+If all attempts fail, the generation remains `failed` and `result_image_url` is
+not exposed.
+
+When `TRYON_DEBUG_BUNDLE_ENABLED=true`, the backend may write a sanitized JSON
+attempt report under `UPLOAD_DIR/tryon-debug/`. The report contains attempt
+status and sanitized error summaries only; it must not include secrets, raw image
+bytes, base64 payloads, provider request payloads, or absolute filesystem paths.
 
 ## Guardrails
 
@@ -65,3 +101,8 @@ Use synthetic or explicitly approved safe photos only. A valid result must:
 - keep `result_image_url` absent when guardrails fail.
 
 Live provider testing still requires an explicit capped execution gate.
+
+References:
+
+- OpenAI image generation and editing guide:
+  <https://developers.openai.com/api/docs/guides/image-generation>

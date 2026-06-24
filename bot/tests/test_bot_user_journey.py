@@ -481,7 +481,7 @@ def test_full_photo_upload_waits_for_mask_preset_when_full_photo_disabled(monkey
     assert message.photos[-1][0] == "high"
     assert message.photos[-1][1] == user_photo.TRY_ON_PHOTO_MASK_PRESET_MESSAGE
     assert keyboard_callback_data(message.photos[-1][2]) == [
-        "try_on:preset:central_upper_garment",
+        "try_on:preset:visible_inner_tshirt",
         "try_on:catalog",
         "try_on:cancel",
     ]
@@ -539,7 +539,7 @@ def test_try_on_photo_upload_shows_preset_keyboard_without_generation(monkeypatc
     assert message.photos[-1][0] == "high"
     assert message.photos[-1][1] == user_photo.TRY_ON_PHOTO_MASK_PRESET_MESSAGE
     assert keyboard_callback_data(message.photos[-1][2]) == [
-        "try_on:preset:central_upper_garment",
+        "try_on:preset:visible_inner_tshirt",
         "try_on:catalog",
         "try_on:cancel",
     ]
@@ -558,7 +558,7 @@ def test_try_on_preset_success_sends_generated_result(monkeypatch) -> None:
         }
     )
     message = FakeMessage()
-    callback = FakeCallback("try_on:preset:central_upper_garment", message)
+    callback = FakeCallback("try_on:preset:visible_inner_tshirt", message)
 
     run(user_photo.use_central_upper_garment_preset(callback, state))
 
@@ -568,7 +568,7 @@ def test_try_on_preset_success_sends_generated_result(monkeypatch) -> None:
     assert client.calls[0]["fabric_id"] == fabric_id
     assert client.calls[0]["photo"] == PNG_1X1
     assert client.calls[0]["input_mode"] == user_photo.INPUT_MODE_FULL_PHOTO
-    assert client.calls[0]["mask_preset"] == user_photo.MASK_PRESET_CENTRAL_UPPER_GARMENT
+    assert client.calls[0]["mask_preset"] == user_photo.MASK_PRESET_VISIBLE_INNER_TSHIRT
     assert state.state == TryOnPhotoStates.photo_ready
     assert state.data["last_photo_file_id"] == "high"
     assert message.photos
@@ -594,7 +594,7 @@ def test_try_on_preset_text_starts_generation(monkeypatch) -> None:
 
     assert client.calls
     assert client.calls[0]["fabric_id"] == fabric_id
-    assert client.calls[0]["mask_preset"] == user_photo.MASK_PRESET_CENTRAL_UPPER_GARMENT
+    assert client.calls[0]["mask_preset"] == user_photo.MASK_PRESET_VISIBLE_INNER_TSHIRT
     assert state.state == TryOnPhotoStates.photo_ready
 
 

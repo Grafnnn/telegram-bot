@@ -117,6 +117,9 @@ class Settings:
     user_photo_preservation_max_mean_delta: float = 1.0
     user_photo_preservation_max_changed_pixel_percent: float = 1.0
     user_photo_preservation_pixel_delta_threshold: int = 8
+    tryon_provider_strategy: str = "chatgpt_like_masked_edit"
+    tryon_max_provider_attempts: int = 1
+    tryon_debug_bundle_enabled: bool = False
 
     crop_only_operator_review_track_a_enabled: bool = False
 
@@ -209,6 +212,21 @@ class Settings:
             "user_photo_preservation_pixel_delta_threshold": _get_int(
                 "USER_PHOTO_PRESERVATION_PIXEL_DELTA_THRESHOLD",
                 cls.user_photo_preservation_pixel_delta_threshold,
+                env_file,
+            ),
+            "tryon_provider_strategy": _get_value(
+                "TRYON_PROVIDER_STRATEGY",
+                cls.tryon_provider_strategy,
+                env_file,
+            ),
+            "tryon_max_provider_attempts": _get_int(
+                "TRYON_MAX_PROVIDER_ATTEMPTS",
+                cls.tryon_max_provider_attempts,
+                env_file,
+            ),
+            "tryon_debug_bundle_enabled": _get_bool(
+                "TRYON_DEBUG_BUNDLE_ENABLED",
+                cls.tryon_debug_bundle_enabled,
                 env_file,
             ),
             "crop_only_operator_review_track_a_enabled": _get_bool(
