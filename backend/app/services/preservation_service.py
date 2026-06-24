@@ -250,7 +250,7 @@ def _can_normalize_full_frame_candidate(
     width_ratio = candidate_width / original_width
     height_ratio = candidate_height / original_height
     # Avoid treating 1x1 or tiny thumbnails as full-frame provider results.
-    return width_ratio >= 0.5 and height_ratio >= 0.5
+    return width_ratio >= 0.75 and height_ratio >= 0.75
 
 
 def calculate_outside_mask_drift(
