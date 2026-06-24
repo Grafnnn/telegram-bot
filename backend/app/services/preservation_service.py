@@ -86,6 +86,98 @@ def _ensure_same_size(base_image: Image.Image, candidate_image: Image.Image, mas
     raise ValueError(f"Preservation drift inputs must have matching dimensions: {details}")
 
 
+def _changed_pixel_bounds(
+    base_image: Image.Image,
+    candidate_image: Image.Image,
+    *,
+    pixel_delta_threshold: int,
+) -> tuple[int, int, int, int, int] | None:
+    """Return the bounding box and count for visibly changed pixels."""
+
+    base_rgb = base_image.convert("RGB")
+    candidate_rgb = candidate_image.convert("RGB")
+    min_x = base_rgb.width
+    min_y = base_rgb.height
+    max_x = -1
+    max_y = -1
+    changed_count = 0
+    for index, (base_pixel, candidate_pixel) in enumerate(
+        zip(_pixel_data(base_rgb), _pixel_data(candidate_rgb), strict=True)
+    ):
+        delta = max(abs(int(left) - int(right)) for left, right in zip(base_pixel, candidate_pixel, strict=True))
+        if delta <= pixel_delta_threshold:
+            continue
+        x = index % base_rgb.width
+        y = index // base_rgb.width
+        min_x = min(min_x, x)
+        min_y = min(min_y, y)
+        max_x = max(max_x, x)
+        max_y = max(max_y, y)
+        changed_count += 1
+    if changed_count <= 0:
+        return None
+    return min_x, min_y, max_x, max_y, changed_count
+
+
+def _editable_mask_fill_ratio(mask_image: Image.Image, *, editable_alpha_threshold: int = EDITABLE_ALPHA_THRESHOLD) -> float:
+    """Return how rectangular the editable mask region is inside its own bounds."""
+
+    alpha = mask_image.convert("RGBA").getchannel("A")
+    min_x = alpha.width
+    min_y = alpha.height
+    max_x = -1
+    max_y = -1
+    editable_count = 0
+    for index, alpha_value in enumerate(_pixel_data(alpha)):
+        if alpha_value >= editable_alpha_threshold:
+            continue
+        x = index % alpha.width
+        y = index // alpha.width
+        min_x = min(min_x, x)
+        min_y = min(min_y, y)
+        max_x = max(max_x, x)
+        max_y = max(max_y, y)
+        editable_count += 1
+    if editable_count <= 0:
+        return 0.0
+    bbox_area = (max_x - min_x + 1) * (max_y - min_y + 1)
+    return editable_count / bbox_area if bbox_area else 0.0
+
+
+def _looks_like_rectangular_overlay(
+    base_image: Image.Image,
+    candidate_image: Image.Image,
+    mask_image: Image.Image,
+    *,
+    pixel_delta_threshold: int,
+) -> bool:
+    """Detect large hard-edged rectangular paste/collage artifacts.
+
+    This is intentionally conservative: it targets outputs where most changed
+    pixels fill one large axis-aligned rectangle while the editable mask itself
+    is not rectangular. Normal masked edits that follow a shirt/polygon mask do
+    not fill the entire mask bounding box and therefore pass this heuristic.
+    """
+
+    bounds = _changed_pixel_bounds(base_image, candidate_image, pixel_delta_threshold=pixel_delta_threshold)
+    if bounds is None:
+        return False
+    min_x, min_y, max_x, max_y, changed_count = bounds
+    bbox_width = max_x - min_x + 1
+    bbox_height = max_y - min_y + 1
+    bbox_area = bbox_width * bbox_height
+    total_area = base_image.width * base_image.height
+    if total_area <= 0 or bbox_area <= 0:
+        return False
+    if bbox_area / total_area < 0.04:
+        return False
+    changed_fill_ratio = changed_count / bbox_area
+    if changed_fill_ratio < 0.86:
+        return False
+    mask_fill_ratio = _editable_mask_fill_ratio(mask_image)
+    return mask_fill_ratio < 0.86
+
+
 def _load_image_copy(path: Path) -> Image.Image:
     with Image.open(path) as image:
         return image.copy()
@@ -189,6 +281,20 @@ def evaluate_generated_image_preservation(
         return PreservationCheckResult(
             passes=False,
             reason="size_mismatch",
+            message=PRESERVATION_FAILURE_MESSAGE,
+            thresholds=active_thresholds,
+            drift=None,
+        )
+
+    if _looks_like_rectangular_overlay(
+        base_image,
+        candidate_image,
+        mask_image,
+        pixel_delta_threshold=active_thresholds.pixel_delta_threshold,
+    ):
+        return PreservationCheckResult(
+            passes=False,
+            reason="rectangular_overlay_detected",
             message=PRESERVATION_FAILURE_MESSAGE,
             thresholds=active_thresholds,
             drift=None,
