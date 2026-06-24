@@ -336,6 +336,8 @@ def test_user_photo_generation_preset_mask_calls_provider_with_mask(
         captured["prompt"] = prompt
         with Image.open(user_photo_path) as provider_input:
             captured["provider_input_size"] = f"{provider_input.width}x{provider_input.height}"
+        with Image.open(mask_image_path) as provider_mask:
+            captured["provider_mask_size"] = f"{provider_mask.width}x{provider_mask.height}"
         assert mask_image_path is not None
         captured["mask_exists_during_call"] = str(Path(mask_image_path).exists())
         return _provider_output_changing_only_mask(user_photo_path, mask_image_path)
@@ -358,11 +360,11 @@ def test_user_photo_generation_preset_mask_calls_provider_with_mask(
     assert payload["mask_image_url"].startswith("/uploads/user-photo-masks/")
     assert captured["mask_image_path"]
     assert captured["mask_exists_during_call"] == "True"
-    assert captured["provider_input_size"] != "300x300"
-    crop_width, crop_height = [int(value) for value in (captured["provider_input_size"] or "").split("x")]
-    assert crop_width <= 150
-    assert crop_height <= 150
+    assert captured["provider_input_size"] == "300x300"
+    assert captured["provider_mask_size"] == "300x300"
     assert "A clothing edit mask is provided" in (captured["prompt"] or "")
+    assert "Return the full-frame edited original photo" in (captured["prompt"] or "")
+    assert "rectangular patch" in (captured["prompt"] or "")
     assert payload["result_image_url"].startswith("/uploads/generations/")
     persisted_mask_path = get_settings().upload_dir / payload["mask_image_url"].removeprefix("/uploads/")
     assert calculate_edit_coverage(persisted_mask_path) == pytest.approx(11.5, abs=0.5)
@@ -377,7 +379,7 @@ def test_user_photo_generation_preset_mask_calls_provider_with_mask(
     assert admin_generation["mask_image_url"] == payload["mask_image_url"]
 
 
-def test_user_photo_generation_preset_mask_composite_discards_provider_protected_crop_drift(
+def test_user_photo_generation_preset_mask_rejects_provider_protected_region_drift(
     client: TestClient,
     monkeypatch,
 ) -> None:
@@ -411,9 +413,10 @@ def test_user_photo_generation_preset_mask_composite_discards_provider_protected
 
     assert response.status_code == 201, response.text
     payload = response.json()
-    assert payload["status"] == "completed"
-    assert payload["result_image_url"].startswith("/uploads/generations/")
+    assert payload["status"] == "failed"
+    assert payload["result_image_url"] is None
     assert payload["mask_image_url"].startswith("/uploads/user-photo-masks/")
+    assert "сохранить исходное фото" in payload["error_message"]
     assert captured["mask_image_path"]
 
 

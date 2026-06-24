@@ -1,6 +1,5 @@
 """Generation routes."""
 
-from io import BytesIO
 import logging
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -25,7 +24,6 @@ from app.schemas.generation import (
     GenerationRead,
 )
 from app.services import image_generation_service
-from app.services.crop_composite_service import composite_edited_crop, prepare_crop_inputs
 from app.services.image_generation_service import IMAGE_ERROR, IMAGE_EDIT_PROMPT, USER_PHOTO_EDIT_PROMPT
 from app.services.image_readiness_service import select_ready_fabric_reference_path
 from app.services.mask_service import prepare_user_photo_mask, prepare_user_photo_preset_mask
@@ -226,10 +224,13 @@ def build_user_photo_fabric_replacement_prompt(
         details.append(
             "A clothing edit mask is provided. This is a strict inpainting/editing task. "
             "Edit only the transparent/editable clothing region defined by the mask. "
+            "Return the full-frame edited original photo, not a crop or standalone garment. "
             "Preserve the original image pixel structure outside the editable clothing mask. "
             "Do not change face, eyes, glasses, hair, skin, hands, fingers, body shape, pose, "
             "background, furniture, objects, lighting, camera angle or composition. "
-            "Preserve all non-editable regions exactly."
+            "Preserve all non-editable regions exactly. "
+            "Do not insert a new person, product mockup, rectangular patch, sticker, collage, "
+            "separate generated crop, or pasted shirt photo."
         )
     details.append(
         "The final clothing fabric must match the selected catalog fabric reference: "
@@ -267,85 +268,6 @@ def _build_garment_crop_prompt(fabric: Fabric) -> str:
         "color, pattern, weave, texture, scale and visual style."
     )
     return "\n".join(details)
-
-
-def _center_crop_to_aspect(image: Image.Image, target_size: tuple[int, int]) -> Image.Image:
-    target_width, target_height = target_size
-    if target_width <= 0 or target_height <= 0:
-        raise ValueError("Target crop size must be positive.")
-    source_width, source_height = image.size
-    if source_width <= 0 or source_height <= 0:
-        raise ValueError("Provider crop output is empty.")
-
-    target_ratio = target_width / target_height
-    source_ratio = source_width / source_height
-    if source_ratio > target_ratio:
-        new_width = max(1, int(source_height * target_ratio))
-        left = max(0, (source_width - new_width) // 2)
-        return image.crop((left, 0, left + new_width, source_height))
-    new_height = max(1, int(source_width / target_ratio))
-    top = max(0, (source_height - new_height) // 2)
-    return image.crop((0, top, source_width, top + new_height))
-
-
-def _provider_crop_to_image(image_bytes: bytes, target_size: tuple[int, int]) -> Image.Image:
-    try:
-        with Image.open(BytesIO(image_bytes)) as image:
-            provider_image = image.convert("RGB")
-    except (OSError, SyntaxError, UnidentifiedImageError) as exc:
-        raise ValueError("Provider crop output is not a readable image.") from exc
-    if provider_image.size == target_size:
-        return provider_image
-    return _center_crop_to_aspect(provider_image, target_size).resize(target_size, Image.Resampling.LANCZOS)
-
-
-def _image_to_bytes(image: Image.Image) -> bytes:
-    output_format = get_settings().openai_image_output_format.strip().lower() or "png"
-    pil_format = "JPEG" if output_format in {"jpg", "jpeg"} else "PNG"
-    buffer = BytesIO()
-    image.convert("RGB").save(buffer, format=pil_format)
-    return buffer.getvalue()
-
-
-def _generate_user_photo_with_crop_composite(
-    *,
-    source_image_path: Path,
-    fabric_reference_path: Path,
-    mask_image_path: Path,
-    prompt: str,
-) -> bytes:
-    """Edit only the generated mask crop, then composite it back locally."""
-
-    try:
-        with Image.open(source_image_path) as source_image, Image.open(mask_image_path) as mask_image:
-            source_copy = source_image.convert("RGB")
-            mask_copy = mask_image.convert("RGBA")
-            crop_inputs = prepare_crop_inputs(source_copy, mask_copy, padding_pixels=12)
-    except (OSError, SyntaxError, UnidentifiedImageError, ValueError) as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "User photo mask is not valid for editing.") from exc
-
-    with TemporaryDirectory(prefix="user-photo-crop-") as tmp_dir:
-        tmp_path = Path(tmp_dir)
-        crop_source_path = tmp_path / "source_crop.png"
-        crop_mask_path = tmp_path / "mask_crop.png"
-        crop_inputs.source_crop.save(crop_source_path, format="PNG")
-        crop_inputs.mask_crop.save(crop_mask_path, format="PNG")
-
-        crop_prompt = (
-            f"{prompt} You are editing a cropped garment region only. "
-            "Use the mask to edit only the transparent clothing pixels inside this crop. "
-            "Do not invent a new person, face, background, room, or full-body scene."
-        )
-        edited_crop_bytes = image_generation_service.generate_fabric_on_user_photo(
-            str(crop_source_path),
-            str(fabric_reference_path),
-            crop_prompt,
-            mask_image_path=str(crop_mask_path),
-        )
-
-    edited_crop = _provider_crop_to_image(edited_crop_bytes, crop_inputs.source_crop.size)
-    composited = composite_edited_crop(source_copy, edited_crop, mask_copy, crop_inputs.crop_box)
-    return _image_to_bytes(composited)
 
 
 def _safe_generation_error(exc: Exception) -> str:
@@ -585,13 +507,6 @@ async def _create_user_photo_generation(
                 str(reference_path),
                 prompt,
                 mask_image_path=None,
-            )
-        elif mask_result is not None and (mask_result.mode == "generated" or mask_result.mode.startswith("preset:")):
-            image_bytes = _generate_user_photo_with_crop_composite(
-                source_image_path=photo_path,
-                fabric_reference_path=reference_path,
-                mask_image_path=mask_result.mask_path,
-                prompt=prompt,
             )
         else:
             image_bytes = image_generation_service.generate_fabric_on_user_photo(

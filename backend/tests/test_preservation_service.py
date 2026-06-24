@@ -30,6 +30,13 @@ def _shirt_mask() -> Image.Image:
     return mask
 
 
+def _polygon_shirt_mask() -> Image.Image:
+    mask = Image.new("RGBA", (64, 64), (0, 0, 0, 255))
+    draw = ImageDraw.Draw(mask)
+    draw.polygon([(24, 20), (40, 20), (45, 32), (41, 46), (23, 46), (19, 32)], fill=(0, 0, 0, 0))
+    return mask
+
+
 def _png_bytes(image: Image.Image) -> bytes:
     buffer = BytesIO()
     image.save(buffer, format="PNG")
@@ -109,6 +116,53 @@ def test_generated_image_preservation_passes_when_only_editable_region_changes(t
     assert result.drift is not None
     assert result.drift.mean_delta == 0
     assert result.drift.changed_pixel_percent == 0
+
+
+def test_generated_image_preservation_fails_rectangular_overlay_inside_mask_bounds(tmp_path) -> None:
+    base = _synthetic_photo()
+    mask = _polygon_shirt_mask()
+    candidate = base.copy()
+    ImageDraw.Draw(candidate).rectangle((19, 20, 45, 46), fill=(20, 180, 40))
+    base_path = tmp_path / "base.png"
+    mask_path = tmp_path / "mask.png"
+    base.save(base_path, format="PNG")
+    mask.save(mask_path, format="PNG")
+
+    result = evaluate_generated_image_preservation(
+        source_image_path=base_path,
+        candidate_image_bytes=_png_bytes(candidate),
+        mask_image_path=mask_path,
+        thresholds=PreservationThresholds(max_mean_delta=1, max_changed_pixel_percent=1, pixel_delta_threshold=8),
+    )
+
+    assert result.passes is False
+    assert result.reason == "rectangular_overlay_detected"
+
+
+def test_generated_image_preservation_allows_polygon_mask_shaped_edit(tmp_path) -> None:
+    base = _synthetic_photo()
+    mask = _polygon_shirt_mask()
+    candidate = base.copy().convert("RGB")
+    alpha = mask.getchannel("A")
+    pixels = candidate.load()
+    for y in range(candidate.height):
+        for x in range(candidate.width):
+            if alpha.getpixel((x, y)) < 128:
+                pixels[x, y] = (20, 180, 40)
+    base_path = tmp_path / "base.png"
+    mask_path = tmp_path / "mask.png"
+    base.save(base_path, format="PNG")
+    mask.save(mask_path, format="PNG")
+
+    result = evaluate_generated_image_preservation(
+        source_image_path=base_path,
+        candidate_image_bytes=_png_bytes(candidate),
+        mask_image_path=mask_path,
+        thresholds=PreservationThresholds(max_mean_delta=1, max_changed_pixel_percent=1, pixel_delta_threshold=8),
+    )
+
+    assert result.passes is True
+    assert result.reason is None
 
 
 def test_generated_image_preservation_fails_when_protected_region_changes(tmp_path) -> None:
