@@ -48,6 +48,7 @@ Default runtime strategy:
 TRYON_PROVIDER_STRATEGY=chatgpt_like_masked_edit
 TRYON_MAX_PROVIDER_ATTEMPTS=1
 TRYON_DEBUG_BUNDLE_ENABLED=false
+TRYON_DEBUG_ARTIFACTS_ENABLED=false
 ```
 
 The backend keeps the full original photo as the base image and uses the full
@@ -60,16 +61,25 @@ Retry prompts become more conservative; they do not disable preservation checks.
 If all attempts fail, the generation remains `failed` and `result_image_url` is
 not exposed.
 
-When `TRYON_DEBUG_BUNDLE_ENABLED=true`, the backend may write a sanitized JSON
-attempt report under `UPLOAD_DIR/tryon-debug/`. The report contains attempt
-status and sanitized error summaries only; it must not include secrets, raw image
-bytes, base64 payloads, provider request payloads, or absolute filesystem paths.
+When `TRYON_DEBUG_BUNDLE_ENABLED=true` or
+`TRYON_DEBUG_ARTIFACTS_ENABLED=true`, the backend may write sanitized private
+debug artifacts under a non-public sibling directory such as
+`tryon-debug-private/<generation_id>/`. The bundle can include the source image,
+mask, mask overlay preview, raw/normalized fabric reference, raw provider
+output, normalized provider output when same-aspect resizing was applied, and
+JSON metadata. It must not be exposed as `result_image_url`, sent to Telegram,
+or copied into GitHub issues. It must not include secrets, raw provider payloads,
+base64 data, or token values.
 
 ## Guardrails
 
 Before saving `result_image_url`, the backend checks:
 
-- provider output dimensions match the original photo and mask;
+- provider output dimensions match the original photo and mask, or the provider
+  output has the same aspect ratio and is safely normalized to the original
+  dimensions before comparison;
+- different-aspect, tiny, crop-looking, or patch-like provider outputs still
+  fail closed;
 - protected pixels outside the mask remain visually stable;
 - the candidate does not look like a large hard-edged rectangular overlay;
 - failed outputs do not get exposed as successful results.
@@ -86,6 +96,8 @@ Local/test runs may store debug artifacts such as:
 - `mask.png`;
 - provider request metadata without secrets;
 - provider output image;
+- normalized provider output image, if a same-aspect provider result was resized
+  for guardrail comparison;
 - `guardrail_report.json`.
 
 Do not store real user photos, raw provider payloads, base64 image data, API

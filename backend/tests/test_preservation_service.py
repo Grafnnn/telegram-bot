@@ -43,6 +43,27 @@ def _png_bytes(image: Image.Image) -> bytes:
     return buffer.getvalue()
 
 
+def _uniform_masked_edit(size: tuple[int, int]) -> tuple[Image.Image, Image.Image, Image.Image]:
+    base = Image.new("RGB", size, (230, 230, 230))
+    mask = Image.new("RGBA", size, (0, 0, 0, 255))
+    left = size[0] // 3
+    right = size[0] * 2 // 3
+    top = size[1] // 3
+    bottom = size[1] * 2 // 3
+    ImageDraw.Draw(mask).polygon(
+        [(left, top), (right, top), (right + 4, bottom), (left - 4, bottom)],
+        fill=(0, 0, 0, 0),
+    )
+    candidate = base.copy()
+    alpha = mask.getchannel("A")
+    pixels = candidate.load()
+    for y in range(candidate.height):
+        for x in range(candidate.width):
+            if alpha.getpixel((x, y)) < 128:
+                pixels[x, y] = (160, 40, 180)
+    return base, mask, candidate
+
+
 def test_outside_mask_drift_ignores_editable_clothing_region() -> None:
     base = _synthetic_photo()
     candidate = base.copy()
@@ -189,7 +210,53 @@ def test_generated_image_preservation_fails_when_protected_region_changes(tmp_pa
     assert result.drift.changed_pixel_percent > 1
 
 
-def test_generated_image_preservation_fails_size_mismatch(tmp_path) -> None:
+def test_generated_image_preservation_normalizes_same_aspect_full_frame_output(tmp_path) -> None:
+    base, mask, candidate = _uniform_masked_edit((128, 192))
+    provider_sized_candidate = candidate.resize((256, 384), Image.Resampling.NEAREST)
+    base_path = tmp_path / "base.png"
+    mask_path = tmp_path / "mask.png"
+    base.save(base_path, format="PNG")
+    mask.save(mask_path, format="PNG")
+
+    result = evaluate_generated_image_preservation(
+        source_image_path=base_path,
+        candidate_image_bytes=_png_bytes(provider_sized_candidate),
+        mask_image_path=mask_path,
+        thresholds=PreservationThresholds(max_mean_delta=1, max_changed_pixel_percent=1, pixel_delta_threshold=8),
+    )
+
+    assert result.passes is True
+    assert result.reason is None
+    assert result.metadata is not None
+    assert result.metadata.provider_output_size == (256, 384)
+    assert result.metadata.normalized_output_size == (128, 192)
+    assert result.metadata.size_normalized is True
+    assert result.normalized_candidate_image_bytes is not None
+    with Image.open(BytesIO(result.normalized_candidate_image_bytes)) as normalized:
+        assert normalized.size == (128, 192)
+
+
+def test_generated_image_preservation_fails_different_aspect_provider_output(tmp_path) -> None:
+    base, mask, _candidate = _uniform_masked_edit((128, 192))
+    base_path = tmp_path / "base.png"
+    mask_path = tmp_path / "mask.png"
+    base.save(base_path, format="PNG")
+    mask.save(mask_path, format="PNG")
+
+    result = evaluate_generated_image_preservation(
+        source_image_path=base_path,
+        candidate_image_bytes=_png_bytes(Image.new("RGB", (256, 256), color=(230, 230, 230))),
+        mask_image_path=mask_path,
+    )
+
+    assert result.passes is False
+    assert result.reason == "size_mismatch"
+    assert result.metadata is not None
+    assert result.metadata.reject_reason == "provider_output_not_full_frame_same_aspect"
+    assert result.metadata.size_normalized is False
+
+
+def test_generated_image_preservation_fails_tiny_same_aspect_provider_output(tmp_path) -> None:
     base_path = tmp_path / "base.png"
     mask_path = tmp_path / "mask.png"
     _synthetic_photo().save(base_path, format="PNG")
@@ -204,6 +271,8 @@ def test_generated_image_preservation_fails_size_mismatch(tmp_path) -> None:
     assert result.passes is False
     assert result.reason == "size_mismatch"
     assert result.drift is None
+    assert result.metadata is not None
+    assert result.metadata.reject_reason == "provider_output_not_full_frame_same_aspect"
 
 
 def test_generated_image_preservation_fails_empty_editable_region(tmp_path) -> None:

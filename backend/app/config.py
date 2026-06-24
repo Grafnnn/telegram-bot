@@ -120,6 +120,8 @@ class Settings:
     tryon_provider_strategy: str = "chatgpt_like_masked_edit"
     tryon_max_provider_attempts: int = 1
     tryon_debug_bundle_enabled: bool = False
+    tryon_debug_artifacts_enabled: bool = False
+    tryon_debug_artifact_retention_hours: int = 24
 
     crop_only_operator_review_track_a_enabled: bool = False
 
@@ -227,6 +229,16 @@ class Settings:
             "tryon_debug_bundle_enabled": _get_bool(
                 "TRYON_DEBUG_BUNDLE_ENABLED",
                 cls.tryon_debug_bundle_enabled,
+                env_file,
+            ),
+            "tryon_debug_artifacts_enabled": _get_bool(
+                "TRYON_DEBUG_ARTIFACTS_ENABLED",
+                cls.tryon_debug_artifacts_enabled,
+                env_file,
+            ),
+            "tryon_debug_artifact_retention_hours": _get_int(
+                "TRYON_DEBUG_ARTIFACT_RETENTION_HOURS",
+                cls.tryon_debug_artifact_retention_hours,
                 env_file,
             ),
             "crop_only_operator_review_track_a_enabled": _get_bool(
