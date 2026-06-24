@@ -70,6 +70,29 @@ TRYON_PROVIDER_STRATEGY=vision_guided_edit
 TRYON_MAX_PROVIDER_ATTEMPTS=1
 ```
 
+Before spending a live provider call with the `visible_inner_tshirt` preset,
+preflight the input photo locally:
+
+```bash
+PYTHONPATH=backend python3 scripts/preflight_user_photo_mask_preset.py \
+  --write-synthetic-visible-inner-tshirt /tmp/visible-inner-tshirt-smoke.png \
+  --preset visible_inner_tshirt
+```
+
+For an existing photo, replace the generated fixture option with the image path:
+
+```bash
+PYTHONPATH=backend python3 scripts/preflight_user_photo_mask_preset.py \
+  /path/to/photo.png \
+  --preset visible_inner_tshirt
+```
+
+The command creates and validates only the preset mask. It does not call
+OpenAI/provider, does not create a generation record, and reports compact mask
+metadata such as image size, mask size, coverage, readiness, and error code.
+The preset is considered ready only when the transparent editable area is
+non-empty and within the configured coverage range.
+
 `TRYON_MAX_PROVIDER_ATTEMPTS` is clamped to `1..3`. A retry is allowed only after
 the previous provider output failed the preservation guardrail or provider call.
 Retry prompts become more conservative; they do not disable preservation checks.
