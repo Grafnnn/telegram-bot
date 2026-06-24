@@ -29,6 +29,7 @@ from app.services.image_generation_service import IMAGE_ERROR, IMAGE_EDIT_PROMPT
 from app.services.image_readiness_service import select_ready_fabric_reference_path
 from app.services.mask_service import prepare_user_photo_mask, prepare_user_photo_preset_mask
 from app.services.preservation_service import (
+    PreservationCheckResult,
     PreservationThresholds,
     UserPhotoPreservationError,
     evaluate_generated_image_preservation,
@@ -471,17 +472,36 @@ def _write_tryon_debug_report(
         logger.warning("User photo try-on debug report write failed error=%s", safe_exception_summary(exc))
 
 
+def _size_metadata(size: tuple[int, int] | None) -> list[int] | None:
+    return [size[0], size[1]] if size is not None else None
+
+
+def _preservation_guardrail_metadata(result: PreservationCheckResult) -> dict[str, object]:
+    """Return sanitized preservation metadata safe for logs/debug JSON."""
+
+    metadata: dict[str, object] = {
+        "original_size": _size_metadata(result.original_size),
+        "provider_output_size": _size_metadata(result.provider_output_size),
+        "mask_size": _size_metadata(result.mask_size),
+        "aspect_ratio_delta": result.aspect_ratio_delta,
+        "size_normalized": result.size_normalized,
+        "normalized_size": _size_metadata(result.normalized_size),
+        "fail_reason": result.reason,
+    }
+    return metadata
+
+
 def _ensure_user_photo_preservation_safe(
     *,
     source_image_path: Path,
     candidate_image_bytes: bytes,
     mask_image_path: Path,
-) -> None:
+) -> PreservationCheckResult | None:
     """Fail closed when a masked provider output changes protected regions."""
 
     settings = get_settings()
     if not settings.user_photo_preservation_check_enabled:
-        return
+        return None
 
     result = evaluate_generated_image_preservation(
         source_image_path=source_image_path,
@@ -490,15 +510,24 @@ def _ensure_user_photo_preservation_safe(
         thresholds=_preservation_thresholds_from_settings(),
     )
     if result.passes:
-        return
+        return result
 
     drift = result.drift
     logger.warning(
-        "User photo preservation guardrail failed reason=%s mean_delta=%s changed_pixel_percent=%s max_delta=%s",
+        (
+            "User photo preservation guardrail failed reason=%s mean_delta=%s changed_pixel_percent=%s "
+            "max_delta=%s original_size=%s provider_output_size=%s mask_size=%s "
+            "aspect_ratio_delta=%s size_normalized=%s"
+        ),
         result.reason,
         f"{drift.mean_delta:.4f}" if drift else "n/a",
         f"{drift.changed_pixel_percent:.4f}" if drift else "n/a",
         drift.max_delta if drift else "n/a",
+        result.original_size,
+        result.provider_output_size,
+        result.mask_size,
+        f"{result.aspect_ratio_delta:.6f}" if result.aspect_ratio_delta is not None else "n/a",
+        result.size_normalized,
     )
     raise UserPhotoPreservationError(result)
 
@@ -544,11 +573,15 @@ def _generate_masked_user_photo_with_attempts(
                     mask_image_path=str(mask_path),
                 )
                 report["provider_called"] = True
-                _ensure_user_photo_preservation_safe(
+                preservation_result = _ensure_user_photo_preservation_safe(
                     source_image_path=photo_path,
                     candidate_image_bytes=image_bytes,
                     mask_image_path=mask_path,
                 )
+                if preservation_result is not None:
+                    report["guardrail_metadata"] = _preservation_guardrail_metadata(preservation_result)
+                    if preservation_result.normalized_candidate_image_bytes is not None:
+                        image_bytes = preservation_result.normalized_candidate_image_bytes
                 report["preservation_checked"] = True
                 report["status"] = "passed"
                 attempt_reports.append(report)
@@ -622,11 +655,15 @@ def _generate_vision_guided_user_photo_with_attempts(
                     mask_image_path=None,
                 )
                 report["provider_called"] = True
-                _ensure_user_photo_preservation_safe(
+                preservation_result = _ensure_user_photo_preservation_safe(
                     source_image_path=photo_path,
                     candidate_image_bytes=image_bytes,
                     mask_image_path=mask_path,
                 )
+                if preservation_result is not None:
+                    report["guardrail_metadata"] = _preservation_guardrail_metadata(preservation_result)
+                    if preservation_result.normalized_candidate_image_bytes is not None:
+                        image_bytes = preservation_result.normalized_candidate_image_bytes
                 report["preservation_checked"] = True
                 report["guardrail_status"] = "passed"
                 report["status"] = "passed"
@@ -637,6 +674,7 @@ def _generate_vision_guided_user_photo_with_attempts(
                 report["preservation_checked"] = True
                 report["guardrail_status"] = "failed"
                 report["guardrail_reason"] = exc.result.reason
+                report["guardrail_metadata"] = _preservation_guardrail_metadata(exc.result)
                 report["status"] = "failed"
                 report["error"] = safe_exception_summary(exc)
                 attempt_reports.append(report)
