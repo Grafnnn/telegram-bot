@@ -2,6 +2,8 @@
 
 import json
 import logging
+from dataclasses import dataclass
+from math import gcd
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from uuid import UUID
@@ -49,6 +51,25 @@ TRYON_PROVIDER_STRATEGIES = {
     TRYON_PROVIDER_STRATEGY_CHATGPT_LIKE_MASKED_EDIT,
     TRYON_PROVIDER_STRATEGY_VISION_GUIDED_EDIT,
 }
+VISION_GUIDED_PROMPT_VERSION = "vision_guided_edit_v2_aspect_control"
+VISION_GUIDED_LEGACY_PROVIDER_SIZES = {
+    "1:1": "1024x1024",
+    "2:3": "1024x1536",
+    "3:2": "1536x1024",
+}
+VISION_GUIDED_GPT_IMAGE_2_MIN_PIXELS = 655_360
+VISION_GUIDED_GPT_IMAGE_2_MAX_PIXELS = 8_294_400
+VISION_GUIDED_GPT_IMAGE_2_MAX_EDGE = 3_840
+VISION_GUIDED_GPT_IMAGE_2_MAX_EDGE_RATIO = 3.0
+
+
+@dataclass(frozen=True)
+class VisionGuidedProviderSize:
+    original_size: tuple[int, int]
+    original_aspect: float
+    requested_size: str
+    requested_aspect: str
+    exact_aspect_supported: bool
 
 
 def _generation_or_404(db: Session, generation_id: UUID) -> Generation:
@@ -263,13 +284,109 @@ def _build_user_photo_prompt(fabric: Fabric, *, mask_used: bool = False, attempt
     )
 
 
+def _aspect_ratio(size: tuple[int, int] | None) -> float | None:
+    if size is None:
+        return None
+    width, height = size
+    if width <= 0 or height <= 0:
+        return None
+    return round(width / height, 6)
+
+
+def _aspect_label(width: int, height: int) -> str:
+    divisor = gcd(width, height)
+    if divisor <= 0:
+        return "unknown"
+    return f"{width // divisor}:{height // divisor}"
+
+
+def _image_orientation(width: int, height: int) -> str:
+    if width == height:
+        return "square"
+    if width > height:
+        return "landscape"
+    return "portrait"
+
+
+def _gpt_image_2_supports_exact_size(width: int, height: int) -> bool:
+    total_pixels = width * height
+    short_edge = min(width, height)
+    long_edge = max(width, height)
+    return (
+        width % 16 == 0
+        and height % 16 == 0
+        and long_edge <= VISION_GUIDED_GPT_IMAGE_2_MAX_EDGE
+        and total_pixels >= VISION_GUIDED_GPT_IMAGE_2_MIN_PIXELS
+        and total_pixels <= VISION_GUIDED_GPT_IMAGE_2_MAX_PIXELS
+        and long_edge / short_edge <= VISION_GUIDED_GPT_IMAGE_2_MAX_EDGE_RATIO
+    )
+
+
+def _select_vision_guided_provider_size(photo_path: Path) -> VisionGuidedProviderSize:
+    """Choose the safest provider size override for full-frame vision-guided edits."""
+
+    try:
+        with Image.open(photo_path) as image:
+            width, height = image.size
+    except (OSError, SyntaxError, UnidentifiedImageError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "User photo is not readable.") from exc
+
+    if width <= 0 or height <= 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "User photo is not readable.")
+
+    aspect = _aspect_ratio((width, height)) or 0.0
+    aspect_label = _aspect_label(width, height)
+    model = get_settings().openai_image_model.strip().lower()
+
+    if model.startswith("gpt-image-2") and _gpt_image_2_supports_exact_size(width, height):
+        return VisionGuidedProviderSize(
+            original_size=(width, height),
+            original_aspect=aspect,
+            requested_size=f"{width}x{height}",
+            requested_aspect=aspect_label,
+            exact_aspect_supported=True,
+        )
+
+    legacy_size = VISION_GUIDED_LEGACY_PROVIDER_SIZES.get(aspect_label)
+    if legacy_size is not None:
+        return VisionGuidedProviderSize(
+            original_size=(width, height),
+            original_aspect=aspect,
+            requested_size=legacy_size,
+            requested_aspect=aspect_label,
+            exact_aspect_supported=True,
+        )
+
+    return VisionGuidedProviderSize(
+        original_size=(width, height),
+        original_aspect=aspect,
+        requested_size="auto",
+        requested_aspect=aspect_label,
+        exact_aspect_supported=False,
+    )
+
+
 def _build_vision_guided_user_photo_prompt(
     fabric: Fabric,
     *,
     mask_mode: str | None = None,
     attempt_index: int = 1,
+    provider_size: VisionGuidedProviderSize | None = None,
 ) -> str:
     """Build a natural-language model-led edit prompt for full-frame try-on."""
+
+    canvas_instruction = (
+        "Return the full original photo with a realistic fabric change."
+    )
+    if provider_size is not None:
+        width, height = provider_size.original_size
+        orientation = _image_orientation(width, height)
+        canvas_instruction = (
+            f"Canvas/framing requirement: return the image in the same {orientation} "
+            f"{provider_size.requested_aspect} aspect ratio and same full-frame composition as the original "
+            f"{width}x{height} input photo. Do not change canvas size, do not change aspect ratio, do not crop, "
+            "do not add padding, do not extend background, do not zoom in, and do not zoom out."
+        )
 
     details = [
         (
@@ -282,7 +399,7 @@ def _build_vision_guided_user_photo_prompt(
         ),
         "Do not create a new person. Do not create a new shirt. Do not paste a rectangle.",
         "Do not make a collage, sticker, mockup, product photo, crop, or standalone garment.",
-        "Return the full original photo with a realistic fabric change.",
+        canvas_instruction,
         "Use the selected catalog fabric reference only as a textile/material guide, not as an object to place.",
         "Retexture/change fabric on the existing visible clothing while preserving garment structure.",
         "Selected catalog fabric:",
@@ -301,6 +418,12 @@ def _build_vision_guided_user_photo_prompt(
             "The target clothing is the visible inner T-shirt under the open overshirt/jacket. "
             "The outer overshirt/jacket must remain unchanged. Hands and phone are occluders and must remain "
             "unchanged. Apply the fabric only where the inner T-shirt is visible."
+        )
+    if provider_size is not None and not provider_size.exact_aspect_supported:
+        details.append(
+            "Provider size is requested as auto because the original aspect ratio is not one of the fixed "
+            "legacy image sizes. Preserve the original input aspect ratio and full-frame canvas instead of "
+            "defaulting to a square or 2:3 portrait canvas."
         )
     if attempt_index > 1:
         details.append(
@@ -483,6 +606,8 @@ def _preservation_guardrail_metadata(result: PreservationCheckResult) -> dict[st
         "original_size": _size_metadata(result.original_size),
         "provider_output_size": _size_metadata(result.provider_output_size),
         "mask_size": _size_metadata(result.mask_size),
+        "original_aspect": _aspect_ratio(result.original_size),
+        "provider_output_aspect": _aspect_ratio(result.provider_output_size),
         "aspect_ratio_delta": result.aspect_ratio_delta,
         "size_normalized": result.size_normalized,
         "normalized_size": _size_metadata(result.normalized_size),
@@ -626,20 +751,27 @@ def _generate_vision_guided_user_photo_with_attempts(
 
     with TemporaryDirectory(prefix="tryon-reference-") as tmp_dir:
         normalized_reference_path = _normalized_fabric_reference_for_provider(reference_path, Path(tmp_dir))
+        provider_size = _select_vision_guided_provider_size(photo_path)
         for attempt in range(1, max_attempts + 1):
             prompt = _build_vision_guided_user_photo_prompt(
                 fabric,
                 mask_mode=mask_mode,
                 attempt_index=attempt,
+                provider_size=provider_size,
             )
             generation.prompt = prompt
             report: dict[str, object] = {
                 "attempt": attempt,
                 "strategy": strategy,
-                "prompt_version": "vision_guided_edit_v1",
+                "prompt_version": VISION_GUIDED_PROMPT_VERSION,
                 "has_original_image": True,
                 "has_fabric_reference": True,
                 "fabric_reference_normalized": True,
+                "requested_provider_size": provider_size.requested_size,
+                "requested_provider_aspect": provider_size.requested_aspect,
+                "original_size": _size_metadata(provider_size.original_size),
+                "original_aspect": provider_size.original_aspect,
+                "exact_provider_aspect_supported": provider_size.exact_aspect_supported,
                 "mask_used": False,
                 "mask_mode": "none",
                 "guardrail_mask_mode": mask_mode,
@@ -653,6 +785,7 @@ def _generate_vision_guided_user_photo_with_attempts(
                     str(normalized_reference_path),
                     prompt,
                     mask_image_path=None,
+                    image_size=provider_size.requested_size,
                 )
                 report["provider_called"] = True
                 preservation_result = _ensure_user_photo_preservation_safe(
