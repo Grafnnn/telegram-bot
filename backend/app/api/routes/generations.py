@@ -3,6 +3,7 @@
 import json
 import logging
 from dataclasses import dataclass
+from io import BytesIO
 from math import gcd
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -31,6 +32,7 @@ from app.services.image_generation_service import IMAGE_ERROR, IMAGE_EDIT_PROMPT
 from app.services.image_readiness_service import select_ready_fabric_reference_path
 from app.services.mask_service import prepare_user_photo_mask, prepare_user_photo_preset_mask
 from app.services.preservation_service import (
+    PRESERVATION_FAILURE_MESSAGE,
     PreservationCheckResult,
     PreservationThresholds,
     UserPhotoPreservationError,
@@ -51,7 +53,7 @@ TRYON_PROVIDER_STRATEGIES = {
     TRYON_PROVIDER_STRATEGY_CHATGPT_LIKE_MASKED_EDIT,
     TRYON_PROVIDER_STRATEGY_VISION_GUIDED_EDIT,
 }
-VISION_GUIDED_PROMPT_VERSION = "vision_guided_edit_v2_aspect_control"
+VISION_GUIDED_PROMPT_VERSION = "vision_guided_edit_v3_canvas_adapter"
 VISION_GUIDED_LEGACY_PROVIDER_SIZES = {
     "1:1": "1024x1024",
     "2:3": "1024x1536",
@@ -70,6 +72,9 @@ class VisionGuidedProviderSize:
     requested_size: str
     requested_aspect: str
     exact_aspect_supported: bool
+    canvas_adapted: bool = False
+    provider_canvas_size: tuple[int, int] | None = None
+    source_box: tuple[int, int, int, int] | None = None
 
 
 def _generation_or_404(db: Session, generation_id: UUID) -> Generation:
@@ -308,6 +313,18 @@ def _image_orientation(width: int, height: int) -> str:
     return "portrait"
 
 
+def _parse_size(size: str) -> tuple[int, int] | None:
+    try:
+        width_text, height_text = size.lower().split("x", 1)
+        width = int(width_text)
+        height = int(height_text)
+    except (ValueError, AttributeError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
+
+
 def _gpt_image_2_supports_exact_size(width: int, height: int) -> bool:
     total_pixels = width * height
     short_edge = min(width, height)
@@ -357,13 +374,95 @@ def _select_vision_guided_provider_size(photo_path: Path) -> VisionGuidedProvide
             exact_aspect_supported=True,
         )
 
+    fallback_size = "1024x1536" if height >= width else "1536x1024"
+    provider_canvas_size = _parse_size(fallback_size)
+    if provider_canvas_size is None:
+        raise RuntimeError("Invalid vision-guided fallback provider size.")
+    canvas_width, canvas_height = provider_canvas_size
+    scale = min(1.0, canvas_width / width, canvas_height / height)
+    adapted_width = max(1, int(round(width * scale)))
+    adapted_height = max(1, int(round(height * scale)))
+    left = (canvas_width - adapted_width) // 2
+    top = (canvas_height - adapted_height) // 2
+
     return VisionGuidedProviderSize(
         original_size=(width, height),
         original_aspect=aspect,
-        requested_size="auto",
-        requested_aspect=aspect_label,
+        requested_size=fallback_size,
+        requested_aspect=_aspect_label(canvas_width, canvas_height),
         exact_aspect_supported=False,
+        canvas_adapted=True,
+        provider_canvas_size=provider_canvas_size,
+        source_box=(left, top, left + adapted_width, top + adapted_height),
     )
+
+
+def _prepare_vision_guided_provider_photo(
+    photo_path: Path,
+    provider_size: VisionGuidedProviderSize,
+    tmp_dir: Path,
+) -> Path:
+    """Return the image path sent to provider for a vision-guided edit."""
+
+    if not provider_size.canvas_adapted:
+        return photo_path
+    if provider_size.provider_canvas_size is None or provider_size.source_box is None:
+        raise RuntimeError("Vision-guided canvas adapter metadata is incomplete.")
+
+    try:
+        with Image.open(photo_path) as image:
+            source = image.convert("RGB")
+    except (OSError, SyntaxError, UnidentifiedImageError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "User photo is not readable.") from exc
+
+    canvas_width, canvas_height = provider_size.provider_canvas_size
+    left, top, right, bottom = provider_size.source_box
+    adapted_width = right - left
+    adapted_height = bottom - top
+    canvas = Image.new("RGB", (canvas_width, canvas_height), color=(245, 245, 245))
+    adapted_source = source.resize((adapted_width, adapted_height), Image.Resampling.LANCZOS)
+    canvas.paste(adapted_source, (left, top))
+
+    provider_photo_path = tmp_dir / "vision_guided_provider_canvas.png"
+    canvas.save(provider_photo_path, format="PNG")
+    return provider_photo_path
+
+
+def _extract_vision_guided_original_frame(
+    image_bytes: bytes,
+    provider_size: VisionGuidedProviderSize,
+) -> bytes:
+    """Reverse the provider canvas adapter before running source-size guardrails."""
+
+    if not provider_size.canvas_adapted:
+        return image_bytes
+    if provider_size.provider_canvas_size is None or provider_size.source_box is None:
+        raise RuntimeError("Vision-guided canvas adapter metadata is incomplete.")
+
+    try:
+        with Image.open(BytesIO(image_bytes)) as image:
+            candidate = image.convert("RGB")
+    except (OSError, SyntaxError, UnidentifiedImageError) as exc:
+        raise UserPhotoPreservationError(
+            PreservationCheckResult(
+                passes=False,
+                reason="invalid_preservation_inputs",
+                message=PRESERVATION_FAILURE_MESSAGE,
+                thresholds=_preservation_thresholds_from_settings(),
+                drift=None,
+            )
+        ) from exc
+
+    canvas_width, canvas_height = provider_size.provider_canvas_size
+    if candidate.size != (canvas_width, canvas_height):
+        return image_bytes
+
+    frame = candidate.crop(provider_size.source_box)
+    if frame.size != provider_size.original_size:
+        frame = frame.resize(provider_size.original_size, Image.Resampling.LANCZOS)
+    buffer = BytesIO()
+    frame.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def _build_vision_guided_user_photo_prompt(
@@ -381,12 +480,22 @@ def _build_vision_guided_user_photo_prompt(
     if provider_size is not None:
         width, height = provider_size.original_size
         orientation = _image_orientation(width, height)
-        canvas_instruction = (
-            f"Canvas/framing requirement: return the image in the same {orientation} "
-            f"{provider_size.requested_aspect} aspect ratio and same full-frame composition as the original "
-            f"{width}x{height} input photo. Do not change canvas size, do not change aspect ratio, do not crop, "
-            "do not add padding, do not extend background, do not zoom in, and do not zoom out."
-        )
+        if provider_size.canvas_adapted and provider_size.provider_canvas_size is not None:
+            canvas_width, canvas_height = provider_size.provider_canvas_size
+            canvas_instruction = (
+                f"Canvas/framing requirement: the original {orientation} {width}x{height} photo is centered inside "
+                f"a neutral {canvas_width}x{canvas_height} provider canvas because this provider only supports fixed "
+                "image sizes. Keep the centered photo region in the same location and proportions. Do not move, crop, "
+                "zoom, stretch, replace, or reframe the person/photo region. Do not turn the padded canvas into a new "
+                "scene. Return the same full provider canvas with only the visible target clothing fabric changed."
+            )
+        else:
+            canvas_instruction = (
+                f"Canvas/framing requirement: return the image in the same {orientation} "
+                f"{provider_size.requested_aspect} aspect ratio and same full-frame composition as the original "
+                f"{width}x{height} input photo. Do not change canvas size, do not change aspect ratio, do not crop, "
+                "do not add padding, do not extend background, do not zoom in, and do not zoom out."
+            )
 
     details = [
         (
@@ -419,7 +528,13 @@ def _build_vision_guided_user_photo_prompt(
             "The outer overshirt/jacket must remain unchanged. Hands and phone are occluders and must remain "
             "unchanged. Apply the fabric only where the inner T-shirt is visible."
         )
-    if provider_size is not None and not provider_size.exact_aspect_supported:
+    if provider_size is not None and provider_size.canvas_adapted:
+        details.append(
+            "The neutral padding around the centered photo is only a compatibility canvas. Preserve the centered "
+            "photo frame exactly; the final safety check will ignore the padding and evaluate only that original "
+            "photo region."
+        )
+    elif provider_size is not None and not provider_size.exact_aspect_supported:
         details.append(
             "Provider size is requested as auto because the original aspect ratio is not one of the fixed "
             "legacy image sizes. Preserve the original input aspect ratio and full-frame canvas instead of "
@@ -750,8 +865,10 @@ def _generate_vision_guided_user_photo_with_attempts(
     last_error: Exception | None = None
 
     with TemporaryDirectory(prefix="tryon-reference-") as tmp_dir:
-        normalized_reference_path = _normalized_fabric_reference_for_provider(reference_path, Path(tmp_dir))
+        tmp_path = Path(tmp_dir)
+        normalized_reference_path = _normalized_fabric_reference_for_provider(reference_path, tmp_path)
         provider_size = _select_vision_guided_provider_size(photo_path)
+        provider_photo_path = _prepare_vision_guided_provider_photo(photo_path, provider_size, tmp_path)
         for attempt in range(1, max_attempts + 1):
             prompt = _build_vision_guided_user_photo_prompt(
                 fabric,
@@ -772,6 +889,9 @@ def _generate_vision_guided_user_photo_with_attempts(
                 "original_size": _size_metadata(provider_size.original_size),
                 "original_aspect": provider_size.original_aspect,
                 "exact_provider_aspect_supported": provider_size.exact_aspect_supported,
+                "provider_canvas_adapted": provider_size.canvas_adapted,
+                "provider_canvas_size": _size_metadata(provider_size.provider_canvas_size),
+                "provider_source_box": list(provider_size.source_box) if provider_size.source_box is not None else None,
                 "mask_used": False,
                 "mask_mode": "none",
                 "guardrail_mask_mode": mask_mode,
@@ -781,13 +901,14 @@ def _generate_vision_guided_user_photo_with_attempts(
             }
             try:
                 image_bytes = image_generation_service.generate_fabric_on_user_photo(
-                    str(photo_path),
+                    str(provider_photo_path),
                     str(normalized_reference_path),
                     prompt,
                     mask_image_path=None,
                     image_size=provider_size.requested_size,
                 )
                 report["provider_called"] = True
+                image_bytes = _extract_vision_guided_original_frame(image_bytes, provider_size)
                 preservation_result = _ensure_user_photo_preservation_safe(
                     source_image_path=photo_path,
                     candidate_image_bytes=image_bytes,

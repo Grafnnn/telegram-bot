@@ -74,6 +74,31 @@ def _open_overshirt_source_bytes(size: tuple[int, int] = (300, 300)) -> bytes:
     return buffer.getvalue()
 
 
+def _visible_inner_tshirt_smoke_source_bytes() -> bytes:
+    """Return the same synthetic shape used by the preset preflight smoke."""
+
+    buffer = BytesIO()
+    width, height = 768, 1024
+    image = Image.new("RGB", (width, height), (38, 44, 50))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 820, width - 1, height - 1), fill=(56, 56, 58))
+    draw.rectangle((90, 90, 678, 920), outline=(90, 95, 100), width=8)
+    draw.ellipse((318, 92, 450, 224), fill=(198, 150, 120), outline=(40, 40, 40), width=3)
+    draw.rectangle((300, 224, 468, 300), fill=(198, 150, 120))
+    draw.polygon(
+        [(292, 300), (476, 300), (540, 505), (492, 825), (276, 825), (228, 505)],
+        fill=(232, 231, 224),
+        outline=(120, 120, 115),
+    )
+    draw.polygon([(195, 290), (306, 260), (292, 825), (145, 815)], fill=(30, 126, 70), outline=(20, 85, 50))
+    draw.polygon([(573, 290), (462, 260), (476, 825), (623, 815)], fill=(30, 126, 70), outline=(20, 85, 50))
+    draw.ellipse((488, 640, 620, 755), fill=(198, 150, 120), outline=(40, 40, 40))
+    draw.ellipse((140, 455, 235, 590), fill=(198, 150, 120), outline=(40, 40, 40))
+    draw.rectangle((520, 438, 582, 625), fill=(18, 18, 20))
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 def _mask_bytes(size: tuple[int, int] = (300, 300), box: tuple[int, int, int, int] = (75, 75, 225, 225)) -> bytes:
     buffer = BytesIO()
     mask = Image.new("RGBA", size, color=(0, 0, 0, 255))
@@ -550,7 +575,7 @@ def test_user_photo_generation_vision_guided_edit_sends_full_photo_and_reference
     assert "do not add padding" in prompt
 
 
-def test_vision_guided_provider_size_uses_auto_for_unsupported_portrait_aspect(tmp_path, monkeypatch) -> None:
+def test_vision_guided_provider_size_canvas_adapts_unsupported_portrait_aspect(tmp_path, monkeypatch) -> None:
     from app.api.routes import generations as generation_routes
 
     source = tmp_path / "portrait-3x4.png"
@@ -575,16 +600,139 @@ def test_vision_guided_provider_size_uses_auto_for_unsupported_portrait_aspect(t
         get_settings.cache_clear()
 
     assert provider_size.original_size == (768, 1024)
-    assert provider_size.requested_size == "auto"
-    assert provider_size.requested_aspect == "3:4"
+    assert provider_size.requested_size == "1024x1536"
+    assert provider_size.requested_aspect == "2:3"
     assert provider_size.exact_aspect_supported is False
+    assert provider_size.canvas_adapted is True
+    assert provider_size.provider_canvas_size == (1024, 1536)
+    assert provider_size.source_box == (128, 256, 896, 1280)
     assert provider_size.original_aspect == 0.75
-    assert "same portrait 3:4 aspect ratio" in prompt
-    assert "original 768x1024 input photo" in prompt
-    assert "Do not change canvas size" in prompt
-    assert "do not crop" in prompt
-    assert "do not add padding" in prompt
-    assert "instead of defaulting to a square or 2:3 portrait canvas" in prompt
+    assert "original portrait 768x1024 photo is centered inside" in prompt
+    assert "neutral 1024x1536 provider canvas" in prompt
+    assert "Do not move, crop, zoom, stretch, replace, or reframe the person/photo region" in prompt
+    assert "only a compatibility canvas" in prompt
+
+
+def test_vision_guided_canvas_adapter_extracts_original_frame(tmp_path, monkeypatch) -> None:
+    from app.api.routes import generations as generation_routes
+
+    source = tmp_path / "portrait-3x4.png"
+    source_image = Image.new("RGB", (768, 1024), color=(40, 50, 60))
+    ImageDraw.Draw(source_image).rectangle((260, 360, 500, 760), fill=(210, 210, 200))
+    source_image.save(source)
+    monkeypatch.setenv("OPENAI_IMAGE_MODEL", "gpt-image-1")
+    get_settings.cache_clear()
+
+    try:
+        provider_size = generation_routes._select_vision_guided_provider_size(source)
+        provider_photo_path = generation_routes._prepare_vision_guided_provider_photo(source, provider_size, tmp_path)
+    finally:
+        monkeypatch.delenv("OPENAI_IMAGE_MODEL", raising=False)
+        get_settings.cache_clear()
+
+    with Image.open(provider_photo_path) as provider_input:
+        assert provider_input.size == (1024, 1536)
+        assert provider_input.getpixel((0, 0)) == (245, 245, 245)
+        assert provider_input.crop(provider_size.source_box).size == (768, 1024)
+
+    # Simulate a provider that preserves the padded canvas and edits only the centered photo region.
+    with Image.open(provider_photo_path) as provider_input:
+        provider_output = provider_input.convert("RGB")
+    draw = ImageDraw.Draw(provider_output)
+    draw.rectangle((388, 616, 636, 760), fill=(160, 60, 180))
+    buffer = BytesIO()
+    provider_output.save(buffer, format="PNG")
+
+    extracted = generation_routes._extract_vision_guided_original_frame(buffer.getvalue(), provider_size)
+    with Image.open(BytesIO(extracted)) as extracted_image:
+        assert extracted_image.size == (768, 1024)
+
+
+def test_user_photo_generation_vision_guided_canvas_adapter_keeps_guardrail_on_original_frame(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    source_bytes = _visible_inner_tshirt_smoke_source_bytes()
+    captured: dict[str, object] = {}
+    monkeypatch.setenv("TRYON_PROVIDER_STRATEGY", "vision_guided_edit")
+    monkeypatch.setenv("OPENAI_IMAGE_MODEL", "gpt-image-1")
+    get_settings.cache_clear()
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+        image_size: str | None = None,
+    ) -> bytes:
+        captured["prompt"] = prompt
+        captured["mask_image_path"] = mask_image_path
+        captured["image_size"] = image_size
+        with Image.open(user_photo_path) as provider_input:
+            captured["provider_input_size"] = provider_input.size
+            provider_output = provider_input.convert("RGB")
+        # Edit only the known centered original-photo region so extraction can return a 768x1024 frame.
+        ImageDraw.Draw(provider_output).polygon(
+            [
+                (448, 360),
+                (576, 360),
+                (600, 520),
+                (584, 760),
+                (440, 760),
+                (424, 520),
+            ],
+            fill=(140, 45, 170),
+        )
+        buffer = BytesIO()
+        provider_output.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+    preservation_called: dict[str, object] = {}
+
+    def fake_preservation_safe(
+        *,
+        source_image_path: Path,
+        candidate_image_bytes: bytes,
+        mask_image_path: Path,
+    ) -> None:
+        preservation_called["source_image_path"] = str(source_image_path)
+        preservation_called["mask_image_path"] = str(mask_image_path)
+        with Image.open(source_image_path) as source_image, Image.open(BytesIO(candidate_image_bytes)) as candidate_image:
+            preservation_called["source_size"] = source_image.size
+            preservation_called["candidate_size"] = candidate_image.size
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+    monkeypatch.setattr(generation_routes, "_ensure_user_photo_preservation_safe", fake_preservation_safe)
+
+    try:
+        response = _post_user_photo(
+            client,
+            fabric_id,
+            source_bytes,
+            "image/png",
+            BOT_HEADERS,
+            mask_preset=MASK_PRESET_VISIBLE_INNER_TSHIRT,
+        )
+    finally:
+        monkeypatch.delenv("TRYON_PROVIDER_STRATEGY", raising=False)
+        monkeypatch.delenv("OPENAI_IMAGE_MODEL", raising=False)
+        get_settings.cache_clear()
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert captured["mask_image_path"] is None
+    assert captured["image_size"] == "1024x1536"
+    assert captured["provider_input_size"] == (1024, 1536)
+    assert preservation_called["source_size"] == (768, 1024)
+    assert preservation_called["candidate_size"] == (768, 1024)
+    assert preservation_called["mask_image_path"]
+    prompt = str(captured["prompt"])
+    assert "neutral 1024x1536 provider canvas" in prompt
+    assert "compatibility canvas" in prompt
 
 
 def test_vision_guided_provider_size_uses_exact_size_for_gpt_image_2(tmp_path, monkeypatch) -> None:
@@ -891,7 +1039,7 @@ def test_user_photo_generation_vision_guided_debug_metadata_is_sanitized(
     [attempt] = report["attempts"]
     assert report["strategy"] == "vision_guided_edit"
     assert attempt["strategy"] == "vision_guided_edit"
-    assert attempt["prompt_version"] == "vision_guided_edit_v2_aspect_control"
+    assert attempt["prompt_version"] == "vision_guided_edit_v3_canvas_adapter"
     assert attempt["requested_provider_size"] == "1024x1024"
     assert attempt["requested_provider_aspect"] == "1:1"
     assert attempt["original_size"] == [300, 300]
