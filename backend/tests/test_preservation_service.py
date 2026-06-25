@@ -44,6 +44,14 @@ def _png_bytes(image: Image.Image) -> bytes:
     return buffer.getvalue()
 
 
+def _write_pair(tmp_path, base: Image.Image, mask: Image.Image) -> tuple[Path, Path]:
+    base_path = tmp_path / "base.png"
+    mask_path = tmp_path / "mask.png"
+    base.save(base_path, format="PNG")
+    mask.save(mask_path, format="PNG")
+    return base_path, mask_path
+
+
 def _write_source_and_mask(tmp_path, base: Image.Image, mask: Image.Image) -> tuple[Path, Path]:
     base_path = tmp_path / "base.png"
     mask_path = tmp_path / "mask.png"
@@ -127,6 +135,81 @@ def test_generated_image_preservation_passes_when_only_editable_region_changes(t
     assert result.drift.changed_pixel_percent == 0
 
 
+def test_generated_image_preservation_allows_minor_global_brightness_shift(tmp_path) -> None:
+    base = _synthetic_photo()
+    mask = _shirt_mask()
+    candidate = Image.eval(base, lambda value: min(255, value + 10))
+    base_path, mask_path = _write_pair(tmp_path, base, mask)
+
+    result = evaluate_generated_image_preservation(
+        source_image_path=base_path,
+        candidate_image_bytes=_png_bytes(candidate),
+        mask_image_path=mask_path,
+        thresholds=PreservationThresholds(max_mean_delta=1, max_changed_pixel_percent=1, pixel_delta_threshold=8),
+    )
+
+    assert result.passes is True
+    assert result.reason is None
+    assert result.drift is not None
+    assert result.drift.color_normalization_applied is True
+    assert result.drift.mean_delta == pytest.approx(0)
+    assert result.drift.changed_pixel_percent == 0
+
+
+def test_generated_image_preservation_allows_compression_like_noise_outside_mask(tmp_path) -> None:
+    base = _synthetic_photo()
+    mask = _shirt_mask()
+    candidate = base.copy().convert("RGB")
+    pixels = candidate.load()
+    for y in range(candidate.height):
+        for x in range(candidate.width):
+            r, g, b = pixels[x, y]
+            offset = 3 if (x + y) % 2 == 0 else -3
+            pixels[x, y] = (
+                max(0, min(255, r + offset)),
+                max(0, min(255, g + offset)),
+                max(0, min(255, b + offset)),
+            )
+    base_path, mask_path = _write_pair(tmp_path, base, mask)
+
+    result = evaluate_generated_image_preservation(
+        source_image_path=base_path,
+        candidate_image_bytes=_png_bytes(candidate),
+        mask_image_path=mask_path,
+        thresholds=PreservationThresholds(max_mean_delta=4, max_changed_pixel_percent=1, pixel_delta_threshold=8),
+    )
+
+    assert result.passes is True
+    assert result.reason is None
+    assert result.drift is not None
+    assert result.drift.max_delta <= 4
+    assert result.drift.changed_pixel_percent == 0
+
+
+def test_generated_image_preservation_ignores_small_boundary_blend_around_mask(tmp_path) -> None:
+    base = _synthetic_photo()
+    mask = _shirt_mask()
+    candidate = base.copy()
+    draw = ImageDraw.Draw(candidate)
+    draw.rectangle((19, 17, 45, 47), fill=(165, 70, 150))
+    draw.rectangle((22, 20, 42, 44), fill=(165, 70, 150))
+    base_path, mask_path = _write_pair(tmp_path, base, mask)
+
+    result = evaluate_generated_image_preservation(
+        source_image_path=base_path,
+        candidate_image_bytes=_png_bytes(candidate),
+        mask_image_path=mask_path,
+        thresholds=PreservationThresholds(max_mean_delta=1, max_changed_pixel_percent=1, pixel_delta_threshold=8),
+    )
+
+    assert result.passes is True
+    assert result.reason is None
+    assert result.drift is not None
+    assert result.drift.boundary_band_excluded is True
+    assert result.drift.boundary_band_pixel_count > 0
+    assert result.drift.changed_pixel_percent == 0
+
+
 def test_generated_image_preservation_fails_rectangular_overlay_inside_mask_bounds(tmp_path) -> None:
     base = _synthetic_photo()
     mask = _polygon_shirt_mask()
@@ -195,6 +278,26 @@ def test_generated_image_preservation_fails_when_protected_region_changes(tmp_pa
     assert result.reason == "protected_region_drift"
     assert result.drift is not None
     assert result.drift.mean_delta > 1
+    assert result.drift.changed_pixel_percent > 1
+
+
+def test_generated_image_preservation_fails_when_protected_phone_changes(tmp_path) -> None:
+    base = _synthetic_photo()
+    mask = _shirt_mask()
+    candidate = base.copy()
+    ImageDraw.Draw(candidate).rectangle((48, 26, 58, 50), fill=(250, 250, 250), outline=(250, 250, 250))
+    base_path, mask_path = _write_pair(tmp_path, base, mask)
+
+    result = evaluate_generated_image_preservation(
+        source_image_path=base_path,
+        candidate_image_bytes=_png_bytes(candidate),
+        mask_image_path=mask_path,
+        thresholds=PreservationThresholds(max_mean_delta=1, max_changed_pixel_percent=1, pixel_delta_threshold=8),
+    )
+
+    assert result.passes is False
+    assert result.reason == "protected_region_drift"
+    assert result.drift is not None
     assert result.drift.changed_pixel_percent > 1
 
 
@@ -311,5 +414,6 @@ def test_generated_image_preservation_threshold_equality_passes(tmp_path) -> Non
 
     assert result.passes is True
     assert result.drift is not None
-    assert result.drift.mean_delta == pytest.approx(1)
+    assert result.drift.color_normalization_applied is True
+    assert result.drift.mean_delta == pytest.approx(0)
     assert result.drift.changed_pixel_percent == 0
