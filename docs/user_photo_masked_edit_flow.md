@@ -63,6 +63,24 @@ locally, and does not send the preset mask to the provider. The preset mask is
 still prepared and stored so the backend can run the same preservation
 guardrail before exposing any result.
 
+For this strategy the backend chooses a per-request provider size from the
+original image dimensions instead of blindly using `OPENAI_IMAGE_SIZE`. For
+fixed-size `gpt-image-1` requests it uses the matching fixed aspect when the
+original is square, 2:3 portrait, or 3:2 landscape. When the original aspect is
+not one of those fixed legacy sizes, such as the 3:4 synthetic smoke fixture, it
+requests `size=auto` and adds an explicit prompt requirement to preserve the
+original full-frame canvas, aspect ratio, framing, and composition. Models that
+support exact custom sizes can request the original `WIDTHxHEIGHT` directly when
+the source dimensions satisfy that model's documented size constraints.
+
+This is only provider guidance. The preservation guardrail remains authoritative:
+same-aspect different-size full-frame outputs may be normalized before drift
+checks, but different-aspect outputs, crops, padding/extended canvases, standalone
+garments, rectangular patches, or protected-region drift still fail closed and do
+not expose `result_image_url`. Debug metadata records sanitized sizes/aspect
+fields such as requested provider size/aspect, original size/aspect, provider
+output size/aspect, aspect delta, and whether normalization occurred.
+
 For the first staging experiment with this strategy, use:
 
 ```text

@@ -78,7 +78,12 @@ def _extract_image_bytes(response: object) -> bytes:
     return image_bytes
 
 
-def _edit_images(image_paths: list[str | Path], prompt: str, mask_image_path: str | Path | None = None) -> bytes:
+def _edit_images(
+    image_paths: list[str | Path],
+    prompt: str,
+    mask_image_path: str | Path | None = None,
+    image_size: str | None = None,
+) -> bytes:
     api_key = _ensure_configured()
     settings = get_settings()
     try:
@@ -89,7 +94,7 @@ def _edit_images(image_paths: list[str | Path], prompt: str, mask_image_path: st
                 "model": settings.openai_image_model,
                 "image": images,
                 "prompt": prompt,
-                "size": settings.openai_image_size,
+                "size": image_size or settings.openai_image_size,
                 "quality": settings.openai_image_quality,
                 "output_format": settings.openai_image_output_format,
             }
@@ -121,7 +126,13 @@ def generate_fabric_on_user_photo(
     fabric_texture_path: str,
     prompt: str,
     mask_image_path: str | None = None,
+    image_size: str | None = None,
 ) -> bytes:
     """Generate selected fabric texture on a user's uploaded clothing photo."""
 
-    return _edit_images([user_photo_path, fabric_texture_path], prompt, mask_image_path=mask_image_path)
+    return _edit_images(
+        [user_photo_path, fabric_texture_path],
+        prompt,
+        mask_image_path=mask_image_path,
+        image_size=image_size,
+    )

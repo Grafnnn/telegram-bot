@@ -483,11 +483,13 @@ def test_user_photo_generation_vision_guided_edit_sends_full_photo_and_reference
         fabric_reference_path: str,
         prompt: str,
         mask_image_path: str | None = None,
+        image_size: str | None = None,
     ) -> bytes:
         captured["user_photo_path"] = user_photo_path
         captured["fabric_reference_path"] = fabric_reference_path
         captured["prompt"] = prompt
         captured["mask_image_path"] = mask_image_path
+        captured["image_size"] = image_size
         with Image.open(user_photo_path) as provider_input:
             captured["provider_input_size"] = f"{provider_input.width}x{provider_input.height}"
         with Image.open(fabric_reference_path) as reference:
@@ -527,6 +529,7 @@ def test_user_photo_generation_vision_guided_edit_sends_full_photo_and_reference
     assert payload["result_image_url"].startswith("/uploads/generations/")
     assert payload["mask_image_url"].startswith("/uploads/user-photo-masks/")
     assert captured["mask_image_path"] is None
+    assert captured["image_size"] == "1024x1024"
     assert Path(captured["user_photo_path"] or "").parent.name == "user-photos"
     assert Path(captured["fabric_reference_path"] or "").name == "fabric_reference_normalized.png"
     assert captured["provider_input_size"] == "300x300"
@@ -541,7 +544,67 @@ def test_user_photo_generation_vision_guided_edit_sends_full_photo_and_reference
     assert "Do not paste a rectangle" in prompt
     assert "collage" in prompt
     assert "mockup" in prompt
-    assert "Return the full original photo" in prompt
+    assert "same square 1:1 aspect ratio" in prompt
+    assert "Do not change canvas size" in prompt
+    assert "do not crop" in prompt
+    assert "do not add padding" in prompt
+
+
+def test_vision_guided_provider_size_uses_auto_for_unsupported_portrait_aspect(tmp_path, monkeypatch) -> None:
+    from app.api.routes import generations as generation_routes
+
+    source = tmp_path / "portrait-3x4.png"
+    Image.new("RGB", (768, 1024), color=(40, 50, 60)).save(source)
+    monkeypatch.setenv("OPENAI_IMAGE_MODEL", "gpt-image-1")
+    get_settings.cache_clear()
+
+    try:
+        provider_size = generation_routes._select_vision_guided_provider_size(source)
+        prompt = generation_routes._build_vision_guided_user_photo_prompt(
+            Fabric(
+                id=uuid4(),
+                sku="HQ-FABRIC-R2-047",
+                name="Test fabric",
+                status="published",
+            ),
+            mask_mode=f"preset:{MASK_PRESET_VISIBLE_INNER_TSHIRT}",
+            provider_size=provider_size,
+        )
+    finally:
+        monkeypatch.delenv("OPENAI_IMAGE_MODEL", raising=False)
+        get_settings.cache_clear()
+
+    assert provider_size.original_size == (768, 1024)
+    assert provider_size.requested_size == "auto"
+    assert provider_size.requested_aspect == "3:4"
+    assert provider_size.exact_aspect_supported is False
+    assert provider_size.original_aspect == 0.75
+    assert "same portrait 3:4 aspect ratio" in prompt
+    assert "original 768x1024 input photo" in prompt
+    assert "Do not change canvas size" in prompt
+    assert "do not crop" in prompt
+    assert "do not add padding" in prompt
+    assert "instead of defaulting to a square or 2:3 portrait canvas" in prompt
+
+
+def test_vision_guided_provider_size_uses_exact_size_for_gpt_image_2(tmp_path, monkeypatch) -> None:
+    from app.api.routes import generations as generation_routes
+
+    source = tmp_path / "portrait-3x4.png"
+    Image.new("RGB", (768, 1024), color=(40, 50, 60)).save(source)
+    monkeypatch.setenv("OPENAI_IMAGE_MODEL", "gpt-image-2")
+    get_settings.cache_clear()
+
+    try:
+        provider_size = generation_routes._select_vision_guided_provider_size(source)
+    finally:
+        monkeypatch.delenv("OPENAI_IMAGE_MODEL", raising=False)
+        get_settings.cache_clear()
+
+    assert provider_size.original_size == (768, 1024)
+    assert provider_size.requested_size == "768x1024"
+    assert provider_size.requested_aspect == "3:4"
+    assert provider_size.exact_aspect_supported is True
 
 
 def test_user_photo_generation_vision_guided_edit_rejects_guardrail_failure_without_result(
@@ -559,6 +622,7 @@ def test_user_photo_generation_vision_guided_edit_rejects_guardrail_failure_with
         fabric_reference_path: str,
         prompt: str,
         mask_image_path: str | None = None,
+        image_size: str | None = None,
     ) -> bytes:
         assert mask_image_path is None
         return _provider_output_changing_protected_region(user_photo_path, mask_image_path or user_photo_path)
@@ -601,6 +665,7 @@ def test_user_photo_generation_saves_normalized_guardrail_output(
         fabric_reference_path: str,
         prompt: str,
         mask_image_path: str | None = None,
+        image_size: str | None = None,
     ) -> bytes:
         assert mask_image_path is None
         return _png_bytes(size=(600, 600), color=(20, 120, 180))
@@ -669,6 +734,7 @@ def test_user_photo_generation_vision_guided_edit_retries_until_guardrail_pass(
         fabric_reference_path: str,
         prompt: str,
         mask_image_path: str | None = None,
+        image_size: str | None = None,
     ) -> bytes:
         assert mask_image_path is None
         calls.append(prompt)
@@ -775,6 +841,7 @@ def test_user_photo_generation_vision_guided_debug_metadata_is_sanitized(
         fabric_reference_path: str,
         prompt: str,
         mask_image_path: str | None = None,
+        image_size: str | None = None,
     ) -> bytes:
         assert mask_image_path is None
         return PNG_300
@@ -824,7 +891,12 @@ def test_user_photo_generation_vision_guided_debug_metadata_is_sanitized(
     [attempt] = report["attempts"]
     assert report["strategy"] == "vision_guided_edit"
     assert attempt["strategy"] == "vision_guided_edit"
-    assert attempt["prompt_version"] == "vision_guided_edit_v1"
+    assert attempt["prompt_version"] == "vision_guided_edit_v2_aspect_control"
+    assert attempt["requested_provider_size"] == "1024x1024"
+    assert attempt["requested_provider_aspect"] == "1:1"
+    assert attempt["original_size"] == [300, 300]
+    assert attempt["original_aspect"] == 1.0
+    assert attempt["exact_provider_aspect_supported"] is True
     assert attempt["mask_used"] is False
     assert attempt["mask_mode"] == "none"
     assert attempt["guardrail_mask_mode"] == f"preset:{MASK_PRESET_CENTRAL_UPPER_GARMENT}"
@@ -833,6 +905,8 @@ def test_user_photo_generation_vision_guided_debug_metadata_is_sanitized(
         "original_size": [300, 300],
         "provider_output_size": [1024, 1024],
         "mask_size": [300, 300],
+        "original_aspect": 1.0,
+        "provider_output_aspect": 1.0,
         "aspect_ratio_delta": 0.0,
         "size_normalized": False,
         "normalized_size": None,
