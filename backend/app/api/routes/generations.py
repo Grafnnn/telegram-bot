@@ -728,6 +728,17 @@ def _preservation_guardrail_metadata(result: PreservationCheckResult) -> dict[st
         "normalized_size": _size_metadata(result.normalized_size),
         "fail_reason": result.reason,
     }
+    if result.drift is not None:
+        metadata.update(
+            {
+                "protected_region_score": result.drift.protected_region_score,
+                "protected_region_changed_ratio": result.drift.changed_pixel_percent,
+                "protected_region_sampled_pixels": result.drift.protected_pixel_count,
+                "boundary_band_excluded": result.drift.boundary_band_excluded,
+                "boundary_band_pixels": result.drift.boundary_band_pixel_count,
+                "color_normalization_applied": result.drift.color_normalization_applied,
+            }
+        )
     return metadata
 
 
@@ -757,7 +768,8 @@ def _ensure_user_photo_preservation_safe(
         (
             "User photo preservation guardrail failed reason=%s mean_delta=%s changed_pixel_percent=%s "
             "max_delta=%s original_size=%s provider_output_size=%s mask_size=%s "
-            "aspect_ratio_delta=%s size_normalized=%s"
+            "aspect_ratio_delta=%s size_normalized=%s boundary_band_excluded=%s "
+            "boundary_band_pixels=%s color_normalization_applied=%s"
         ),
         result.reason,
         f"{drift.mean_delta:.4f}" if drift else "n/a",
@@ -768,6 +780,9 @@ def _ensure_user_photo_preservation_safe(
         result.mask_size,
         f"{result.aspect_ratio_delta:.6f}" if result.aspect_ratio_delta is not None else "n/a",
         result.size_normalized,
+        drift.boundary_band_excluded if drift else "n/a",
+        drift.boundary_band_pixel_count if drift else "n/a",
+        drift.color_normalization_applied if drift else "n/a",
     )
     raise UserPhotoPreservationError(result)
 

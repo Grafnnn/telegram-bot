@@ -131,13 +131,21 @@ bytes, base64 payloads, provider request payloads, or absolute filesystem paths.
 Before saving `result_image_url`, the backend checks:
 
 - provider output dimensions match the original photo and mask;
-- protected pixels outside the mask remain visually stable;
+- protected pixels outside the mask remain structurally stable;
 - the candidate does not look like a large hard-edged rectangular overlay;
 - failed outputs do not get exposed as successful results.
 
+The protected-region drift check is intentionally tolerant of small
+provider-side photometric changes. It excludes a narrow boundary band around
+the editable clothing mask, applies a small global color/brightness correction
+before comparing protected pixels, and then scores only the strict protected
+area. This reduces false failures from compression, resize normalization, edge
+blending, or mild color correction. It does not allow structural changes to the
+face, hands, phone, background, outer garments, pose, canvas, or framing.
+
 On rejection, the user receives a safe retry message. Logs keep sanitized
 failure reasons such as `size_mismatch`, `protected_region_drift`, or
-`rectangular_overlay_detected`.
+`rectangular_overlay_detected`, plus numeric drift metadata only.
 
 ## Debug Artifacts
 
@@ -151,6 +159,9 @@ Local/test runs may store debug artifacts such as:
 
 Do not store real user photos, raw provider payloads, base64 image data, API
 keys, bot tokens, or filesystem paths in GitHub issues, PRs, logs, or docs.
+Staging smoke results that include operational details, generation IDs, request
+IDs, service IDs, or private environment posture should be kept in local or
+private channels rather than public GitHub issues.
 
 ## Manual QA
 

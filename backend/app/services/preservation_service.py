@@ -12,12 +12,14 @@ from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageFilter, UnidentifiedImageError
 
 EDITABLE_ALPHA_THRESHOLD = 128
 DEFAULT_PIXEL_DELTA_THRESHOLD = 8
 DEFAULT_ASPECT_RATIO_TOLERANCE = 0.01
 MIN_NORMALIZABLE_DIMENSION_SCALE = 0.5
+DEFAULT_BOUNDARY_EXCLUSION_RADIUS = 3
+DEFAULT_COLOR_NORMALIZATION_MAX_CHANNEL_OFFSET = 12.0
 PRESERVATION_FAILURE_MESSAGE = "Generated image changed protected regions outside the clothing mask."
 PRESERVATION_FAILURE_USER_MESSAGE = (
     "Не удалось безопасно сохранить исходное фото вне области одежды. Попробуйте другое фото или маску."
@@ -35,6 +37,11 @@ class OutsideMaskDrift:
     changed_pixel_count: int
     changed_pixel_percent: float
     pixel_delta_threshold: int
+    boundary_band_excluded: bool = False
+    boundary_band_pixel_count: int = 0
+    color_normalization_applied: bool = False
+    color_normalization_offsets: tuple[float, float, float] | None = None
+    protected_region_score: float | None = None
 
     def passes(self, *, max_mean_delta: float, max_changed_pixel_percent: float) -> bool:
         """Return whether this metric satisfies conservative caller thresholds."""
@@ -180,6 +187,8 @@ def _looks_like_rectangular_overlay(
         return False
     if bbox_area / total_area < 0.04:
         return False
+    if bbox_area / total_area > 0.75:
+        return False
     changed_fill_ratio = changed_count / bbox_area
     if changed_fill_ratio < 0.86:
         return False
@@ -249,6 +258,129 @@ def _maybe_normalize_candidate_size(
     return normalized, True, _image_to_png_bytes(normalized), aspect_ratio_delta
 
 
+def _editable_alpha_mask(
+    mask_image: Image.Image,
+    *,
+    editable_alpha_threshold: int = EDITABLE_ALPHA_THRESHOLD,
+) -> Image.Image:
+    alpha = mask_image.convert("RGBA").getchannel("A")
+    return alpha.point(lambda value: 255 if value < editable_alpha_threshold else 0)
+
+
+def calculate_protected_region_drift(
+    base_image: Image.Image,
+    candidate_image: Image.Image,
+    mask_image: Image.Image,
+    *,
+    editable_alpha_threshold: int = EDITABLE_ALPHA_THRESHOLD,
+    pixel_delta_threshold: int = DEFAULT_PIXEL_DELTA_THRESHOLD,
+    boundary_exclusion_radius: int = DEFAULT_BOUNDARY_EXCLUSION_RADIUS,
+    color_normalization_max_channel_offset: float = DEFAULT_COLOR_NORMALIZATION_MAX_CHANNEL_OFFSET,
+) -> OutsideMaskDrift:
+    """Measure structural drift in protected pixels with photometric tolerance.
+
+    This is the route guardrail metric. It ignores a narrow blending band around
+    the editable clothing mask and subtracts only small global RGB offsets before
+    scoring protected pixels. Local structural changes still produce high deltas.
+    """
+
+    _ensure_same_size(base_image, candidate_image, mask_image)
+
+    base_rgb = base_image.convert("RGB")
+    candidate_rgb = candidate_image.convert("RGB")
+    editable_mask = _editable_alpha_mask(mask_image, editable_alpha_threshold=editable_alpha_threshold)
+    if boundary_exclusion_radius > 0:
+        kernel_size = boundary_exclusion_radius * 2 + 1
+        dilated_editable_mask = editable_mask.filter(ImageFilter.MaxFilter(kernel_size))
+    else:
+        dilated_editable_mask = editable_mask
+
+    base_pixels = list(_pixel_data(base_rgb))
+    candidate_pixels = list(_pixel_data(candidate_rgb))
+    editable_pixels = list(_pixel_data(editable_mask))
+    dilated_pixels = list(_pixel_data(dilated_editable_mask))
+
+    editable_pixel_count = 0
+    protected_pixel_count = 0
+    boundary_band_pixel_count = 0
+    offset_sums = [0.0, 0.0, 0.0]
+
+    for base_pixel, candidate_pixel, editable_value, dilated_value in zip(
+        base_pixels,
+        candidate_pixels,
+        editable_pixels,
+        dilated_pixels,
+        strict=True,
+    ):
+        if editable_value > 0:
+            editable_pixel_count += 1
+            continue
+        if boundary_exclusion_radius > 0 and dilated_value > 0:
+            boundary_band_pixel_count += 1
+            continue
+
+        protected_pixel_count += 1
+        for channel_index, (base_channel, candidate_channel) in enumerate(
+            zip(base_pixel, candidate_pixel, strict=True)
+        ):
+            offset_sums[channel_index] += int(candidate_channel) - int(base_channel)
+
+    raw_offsets = (
+        tuple(value / protected_pixel_count for value in offset_sums) if protected_pixel_count else (0.0, 0.0, 0.0)
+    )
+    color_normalization_applied = bool(
+        protected_pixel_count
+        and any(abs(offset) >= 0.5 for offset in raw_offsets)
+        and all(abs(offset) <= color_normalization_max_channel_offset for offset in raw_offsets)
+    )
+    offsets = raw_offsets if color_normalization_applied else (0.0, 0.0, 0.0)
+
+    changed_pixel_count = 0
+    total_delta = 0.0
+    max_delta = 0.0
+
+    for base_pixel, candidate_pixel, editable_value, dilated_value in zip(
+        base_pixels,
+        candidate_pixels,
+        editable_pixels,
+        dilated_pixels,
+        strict=True,
+    ):
+        if editable_value > 0:
+            continue
+        if boundary_exclusion_radius > 0 and dilated_value > 0:
+            continue
+
+        delta = max(
+            abs(float(base_channel) - (float(candidate_channel) - offsets[channel_index]))
+            for channel_index, (base_channel, candidate_channel) in enumerate(
+                zip(base_pixel, candidate_pixel, strict=True)
+            )
+        )
+        total_delta += delta
+        max_delta = max(max_delta, delta)
+        if delta > pixel_delta_threshold:
+            changed_pixel_count += 1
+
+    mean_delta = total_delta / protected_pixel_count if protected_pixel_count else 0.0
+    changed_pixel_percent = changed_pixel_count / protected_pixel_count * 100 if protected_pixel_count else 0.0
+
+    return OutsideMaskDrift(
+        protected_pixel_count=protected_pixel_count,
+        editable_pixel_count=editable_pixel_count,
+        mean_delta=mean_delta,
+        max_delta=int(round(max_delta)),
+        changed_pixel_count=changed_pixel_count,
+        changed_pixel_percent=changed_pixel_percent,
+        pixel_delta_threshold=pixel_delta_threshold,
+        boundary_band_excluded=boundary_exclusion_radius > 0,
+        boundary_band_pixel_count=boundary_band_pixel_count,
+        color_normalization_applied=color_normalization_applied,
+        color_normalization_offsets=raw_offsets if color_normalization_applied else None,
+        protected_region_score=mean_delta,
+    )
+
+
 def calculate_outside_mask_drift(
     base_image: Image.Image,
     candidate_image: Image.Image,
@@ -305,6 +437,7 @@ def calculate_outside_mask_drift(
         changed_pixel_count=changed_pixel_count,
         changed_pixel_percent=changed_pixel_percent,
         pixel_delta_threshold=pixel_delta_threshold,
+        protected_region_score=mean_delta,
     )
 
 
@@ -399,7 +532,7 @@ def evaluate_generated_image_preservation(
         )
 
     try:
-        drift = calculate_outside_mask_drift(
+        drift = calculate_protected_region_drift(
             base_image,
             candidate_image,
             mask_image,
