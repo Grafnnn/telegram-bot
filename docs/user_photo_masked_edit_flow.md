@@ -55,6 +55,16 @@ uses the full same-size mask as provider guidance. It does not crop the garment,
 paste a generated patch, or send a standalone garment crop as the user-facing
 result.
 
+When the selected provider/model only accepts fixed output sizes and the source
+photo uses another aspect ratio, the backend uses the same compatibility-canvas
+adapter as the vision-guided path: it centers the original photo on the closest
+supported neutral canvas, adapts the edit mask onto that canvas, asks the
+provider to return the full canvas, then extracts the original-photo frame
+before running the preservation guardrail. Neutral padding is opaque in the mask
+and must not be edited. This is not a crop/composite output path; the
+user-facing candidate is still judged only against the original full-frame photo
+and same-size mask.
+
 `vision_guided_edit` is an alternative staging strategy for complex real-world
 photos where a hard provider mask may hurt quality. It sends the original
 full-frame photo and normalized fabric reference to the provider with a natural
@@ -63,9 +73,9 @@ locally, and does not send the preset mask to the provider. The preset mask is
 still prepared and stored so the backend can run the same preservation
 guardrail before exposing any result.
 
-For this strategy the backend chooses a per-request provider size from the
-original image dimensions instead of blindly using `OPENAI_IMAGE_SIZE`. For
-fixed-size `gpt-image-1` requests it uses the matching fixed aspect when the
+For full-frame edit strategies the backend chooses a per-request provider size
+from the original image dimensions instead of blindly using `OPENAI_IMAGE_SIZE`.
+For fixed-size `gpt-image-1` requests it uses the matching fixed aspect when the
 original is square, 2:3 portrait, or 3:2 landscape. When the original aspect is
 not one of those fixed legacy sizes, such as the 3:4 synthetic smoke fixture, it
 uses a canvas adapter instead of `size=auto`: the original photo is centered on

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import inspect
 from dataclasses import dataclass
 from io import BytesIO
 from math import gcd
@@ -428,6 +429,67 @@ def _prepare_vision_guided_provider_photo(
     return provider_photo_path
 
 
+def _prepare_provider_mask_canvas(
+    mask_path: Path,
+    provider_size: VisionGuidedProviderSize,
+    tmp_dir: Path,
+) -> Path:
+    """Return a mask aligned with the provider canvas adapter.
+
+    OpenAI edit masks use transparent pixels as editable and opaque pixels as
+    protected. Padding around the original source box must therefore be opaque.
+    """
+
+    if not provider_size.canvas_adapted:
+        return mask_path
+    if provider_size.provider_canvas_size is None or provider_size.source_box is None:
+        raise RuntimeError("Provider canvas adapter metadata is incomplete.")
+
+    try:
+        with Image.open(mask_path) as image:
+            source_mask = image.convert("RGBA")
+    except (OSError, SyntaxError, UnidentifiedImageError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Mask image is not readable.") from exc
+
+    canvas_width, canvas_height = provider_size.provider_canvas_size
+    left, top, right, bottom = provider_size.source_box
+    adapted_width = right - left
+    adapted_height = bottom - top
+    canvas = Image.new("RGBA", (canvas_width, canvas_height), color=(0, 0, 0, 255))
+    adapted_mask = source_mask.resize((adapted_width, adapted_height), Image.Resampling.NEAREST)
+    canvas.paste(adapted_mask, (left, top))
+
+    provider_mask_path = tmp_dir / "masked_edit_provider_canvas_mask.png"
+    canvas.save(provider_mask_path, format="PNG")
+    return provider_mask_path
+
+
+def _generate_fabric_on_user_photo(
+    user_photo_path: str,
+    fabric_reference_path: str,
+    prompt: str,
+    *,
+    mask_image_path: str | None,
+    image_size: str | None = None,
+) -> bytes:
+    """Call the provider while staying compatible with narrow test doubles."""
+
+    generate = image_generation_service.generate_fabric_on_user_photo
+    kwargs = {"mask_image_path": mask_image_path}
+    try:
+        signature = inspect.signature(generate)
+    except (TypeError, ValueError):
+        supports_image_size = True
+    else:
+        supports_image_size = (
+            "image_size" in signature.parameters
+            or any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+        )
+    if image_size is not None and supports_image_size:
+        kwargs["image_size"] = image_size
+    return generate(user_photo_path, fabric_reference_path, prompt, **kwargs)
+
+
 def _extract_vision_guided_original_frame(
     image_bytes: bytes,
     provider_size: VisionGuidedProviderSize,
@@ -808,26 +870,53 @@ def _generate_masked_user_photo_with_attempts(
     last_error: Exception | None = None
 
     with TemporaryDirectory(prefix="tryon-reference-") as tmp_dir:
-        normalized_reference_path = _normalized_fabric_reference_for_provider(reference_path, Path(tmp_dir))
+        tmp_path = Path(tmp_dir)
+        normalized_reference_path = _normalized_fabric_reference_for_provider(reference_path, tmp_path)
+        provider_size = _select_vision_guided_provider_size(photo_path)
+        provider_photo_path = _prepare_vision_guided_provider_photo(photo_path, provider_size, tmp_path)
+        provider_mask_path = _prepare_provider_mask_canvas(mask_path, provider_size, tmp_path)
         for attempt in range(1, max_attempts + 1):
             prompt = _build_user_photo_prompt(fabric, mask_used=True, attempt_index=attempt)
+            if provider_size.canvas_adapted:
+                prompt = "\n".join(
+                    [
+                        prompt,
+                        (
+                            f"The user photo and edit mask are centered on a neutral "
+                            f"{provider_size.requested_size} provider compatibility canvas. "
+                            "Edit only the transparent mask area inside the original-photo frame. "
+                            "Do not edit the neutral padding. Return the full provider canvas with "
+                            "the original-photo frame in the same position and scale."
+                        ),
+                    ]
+                )
             generation.prompt = prompt
             report: dict[str, object] = {
                 "attempt": attempt,
                 "strategy": TRYON_PROVIDER_STRATEGY_CHATGPT_LIKE_MASKED_EDIT,
                 "fabric_reference_normalized": True,
+                "requested_provider_size": provider_size.requested_size,
+                "requested_provider_aspect": provider_size.requested_aspect,
+                "original_size": _size_metadata(provider_size.original_size),
+                "original_aspect": provider_size.original_aspect,
+                "exact_provider_aspect_supported": provider_size.exact_aspect_supported,
+                "provider_canvas_adapted": provider_size.canvas_adapted,
+                "provider_canvas_size": _size_metadata(provider_size.provider_canvas_size),
+                "provider_source_box": list(provider_size.source_box) if provider_size.source_box is not None else None,
                 "provider_called": False,
                 "preservation_checked": False,
                 "status": "started",
             }
             try:
-                image_bytes = image_generation_service.generate_fabric_on_user_photo(
-                    str(photo_path),
+                image_bytes = _generate_fabric_on_user_photo(
+                    str(provider_photo_path),
                     str(normalized_reference_path),
                     prompt,
-                    mask_image_path=str(mask_path),
+                    mask_image_path=str(provider_mask_path),
+                    image_size=provider_size.requested_size,
                 )
                 report["provider_called"] = True
+                image_bytes = _extract_vision_guided_original_frame(image_bytes, provider_size)
                 preservation_result = _ensure_user_photo_preservation_safe(
                     source_image_path=photo_path,
                     candidate_image_bytes=image_bytes,
@@ -915,7 +1004,7 @@ def _generate_vision_guided_user_photo_with_attempts(
                 "status": "started",
             }
             try:
-                image_bytes = image_generation_service.generate_fabric_on_user_photo(
+                image_bytes = _generate_fabric_on_user_photo(
                     str(provider_photo_path),
                     str(normalized_reference_path),
                     prompt,
