@@ -138,6 +138,68 @@ def test_user_photo_generation_can_override_provider_size_per_call(tmp_path, mon
     assert captured["size"] == "auto"
 
 
+def test_user_photo_generation_sends_input_fidelity_for_supported_model(tmp_path, monkeypatch) -> None:
+    user_photo = tmp_path / "user-photo.png"
+    texture = tmp_path / "texture.png"
+    _write_image(user_photo)
+    _write_image(texture)
+    captured: dict[str, object] = {}
+
+    class FakeImages:
+        def edit(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(data=[SimpleNamespace(b64_json=base64.b64encode(PNG_1X1).decode("ascii"))])
+
+    class FakeClient:
+        images = FakeImages()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-provider")
+    monkeypatch.setenv("OPENAI_IMAGE_MODEL", "gpt-image-1")
+    get_settings.cache_clear()
+    monkeypatch.setattr(image_generation_service, "_create_openai_client", lambda _api_key: FakeClient())
+
+    result = image_generation_service.generate_fabric_on_user_photo(
+        str(user_photo),
+        str(texture),
+        "preserve protected regions",
+        input_fidelity="high",
+    )
+
+    assert result == PNG_1X1
+    assert captured["input_fidelity"] == "high"
+
+
+def test_user_photo_generation_omits_input_fidelity_for_unsupported_model(tmp_path, monkeypatch) -> None:
+    user_photo = tmp_path / "user-photo.png"
+    texture = tmp_path / "texture.png"
+    _write_image(user_photo)
+    _write_image(texture)
+    captured: dict[str, object] = {}
+
+    class FakeImages:
+        def edit(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(data=[SimpleNamespace(b64_json=base64.b64encode(PNG_1X1).decode("ascii"))])
+
+    class FakeClient:
+        images = FakeImages()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-provider")
+    monkeypatch.setenv("OPENAI_IMAGE_MODEL", "gpt-image-2")
+    get_settings.cache_clear()
+    monkeypatch.setattr(image_generation_service, "_create_openai_client", lambda _api_key: FakeClient())
+
+    result = image_generation_service.generate_fabric_on_user_photo(
+        str(user_photo),
+        str(texture),
+        "preserve protected regions",
+        input_fidelity="high",
+    )
+
+    assert result == PNG_1X1
+    assert "input_fidelity" not in captured
+
+
 def test_catalog_style_generation_can_send_mask(tmp_path, monkeypatch) -> None:
     base = tmp_path / "base.png"
     texture = tmp_path / "texture.png"

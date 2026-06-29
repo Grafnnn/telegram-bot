@@ -47,6 +47,7 @@ Default runtime strategy:
 ```text
 TRYON_PROVIDER_STRATEGY=chatgpt_like_masked_edit
 TRYON_MAX_PROVIDER_ATTEMPTS=1
+TRYON_INPUT_FIDELITY=high
 TRYON_DEBUG_BUNDLE_ENABLED=false
 ```
 
@@ -54,6 +55,25 @@ TRYON_DEBUG_BUNDLE_ENABLED=false
 uses the full same-size mask as provider guidance. It does not crop the garment,
 paste a generated patch, or send a standalone garment crop as the user-facing
 result.
+
+For the OpenAI image edit request, the backend keeps a stable input order:
+
+1. first image: the uploaded user photo, or the provider compatibility canvas
+   containing that photo;
+2. second image: the normalized square fabric reference swatch;
+3. mask: the PNG edit mask aligned with the first image. Transparent pixels are
+   editable clothing pixels; opaque pixels are protected.
+
+For `gpt-image-1`, `TRYON_INPUT_FIDELITY=high` is sent as `input_fidelity=high`
+to preserve the first input image details as much as the provider supports. If
+the runtime model does not support that parameter, such as `gpt-image-2` where
+high fidelity is automatic, the backend omits the parameter and records a
+sanitized reason in debug metadata instead of failing the request.
+
+The masked-edit prompt explicitly instructs the provider to treat opaque mask
+pixels as locked source photography and to avoid repainting, relighting,
+beautifying, denoising, recoloring, or reinterpreting protected regions. This is
+provider guidance only; it does not replace the preservation guardrail.
 
 When the selected provider/model only accepts fixed output sizes and the source
 photo uses another aspect ratio, the backend uses the same compatibility-canvas
@@ -94,6 +114,11 @@ not expose `result_image_url`. Debug metadata records sanitized sizes/aspect
 fields such as requested provider size/aspect, original size/aspect, provider
 output size/aspect, aspect delta, whether a provider canvas adapter was used,
 and whether normalization occurred.
+Masked-edit debug metadata also records the provider model, endpoint method,
+input image count and roles, whether the mask was applied to the first input,
+and the `input_fidelity` requested/applied/support decision. It does not include
+raw provider payloads, base64 image data, secrets, tokens, or absolute local
+paths.
 
 For the first staging experiment with this strategy, use:
 
