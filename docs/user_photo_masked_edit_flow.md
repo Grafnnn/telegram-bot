@@ -56,6 +56,22 @@ uses the full same-size mask as provider guidance. It does not crop the garment,
 paste a generated patch, or send a standalone garment crop as the user-facing
 result.
 
+`local_texture_transfer` is a deterministic provider-free strategy for the same
+full-photo and mask inputs. It tiles the selected fabric reference only through
+the transparent clothing mask, transfers the original garment luminance so
+folds, shadows, and broad lighting remain visible, feathers the inside edge of
+the mask, and leaves hard protected pixels outside the mask unchanged. It calls
+no OpenAI/provider endpoint and records `provider_called=false` /
+`provider_attempts=0` in debug metadata.
+
+This local strategy is intentionally narrower than a full AI edit. It does not
+perform semantic garment reconstruction, perspective-perfect cloth simulation,
+or realistic redesign of occluded clothing. It is best suited for visible,
+flat-ish T-shirt or inner-garment areas where preserving the original person,
+phone, hands, outer clothing, and background is more important than high-fashion
+image synthesis. A later gate may add AI edge polish inside a very narrow
+edge-only mask, but only after the local transfer path is stable.
+
 For the OpenAI image edit request, the backend keeps a stable input order:
 
 1. first image: the uploaded user photo, or the provider compatibility canvas
@@ -181,6 +197,11 @@ face, hands, phone, background, outer garments, pose, canvas, or framing.
 On rejection, the user receives a safe retry message. Logs keep sanitized
 failure reasons such as `size_mismatch`, `protected_region_drift`, or
 `rectangular_overlay_detected`, plus numeric drift metadata only.
+
+For `local_texture_transfer`, the preservation guardrail is still mandatory
+before `result_image_url` is saved. Because the local compositor keeps protected
+pixels unchanged by construction, any nonzero protected-region drift is treated
+as a bug or unsafe input and remains fail-closed.
 
 ## Debug Artifacts
 

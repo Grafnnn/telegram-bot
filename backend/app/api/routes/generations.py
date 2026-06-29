@@ -31,6 +31,10 @@ from app.schemas.generation import (
 from app.services import image_generation_service
 from app.services.image_generation_service import IMAGE_ERROR, IMAGE_EDIT_PROMPT, USER_PHOTO_EDIT_PROMPT
 from app.services.image_readiness_service import select_ready_fabric_reference_path
+from app.services.local_texture_transfer_service import (
+    LocalTextureTransferError,
+    transfer_fabric_texture_locally,
+)
 from app.services.mask_service import prepare_user_photo_mask, prepare_user_photo_preset_mask
 from app.services.preservation_service import (
     PRESERVATION_FAILURE_MESSAGE,
@@ -50,9 +54,11 @@ USER_PHOTO_INPUT_MODE_GARMENT_CROP = "garment_crop"
 USER_PHOTO_INPUT_MODES = {USER_PHOTO_INPUT_MODE_FULL_PHOTO, USER_PHOTO_INPUT_MODE_GARMENT_CROP}
 TRYON_PROVIDER_STRATEGY_CHATGPT_LIKE_MASKED_EDIT = "chatgpt_like_masked_edit"
 TRYON_PROVIDER_STRATEGY_VISION_GUIDED_EDIT = "vision_guided_edit"
+TRYON_PROVIDER_STRATEGY_LOCAL_TEXTURE_TRANSFER = "local_texture_transfer"
 TRYON_PROVIDER_STRATEGIES = {
     TRYON_PROVIDER_STRATEGY_CHATGPT_LIKE_MASKED_EDIT,
     TRYON_PROVIDER_STRATEGY_VISION_GUIDED_EDIT,
+    TRYON_PROVIDER_STRATEGY_LOCAL_TEXTURE_TRANSFER,
 }
 VISION_GUIDED_PROMPT_VERSION = "vision_guided_edit_v3_canvas_adapter"
 VISION_GUIDED_LEGACY_PROVIDER_SIZES = {
@@ -1100,6 +1106,64 @@ def _generate_vision_guided_user_photo_with_attempts(
     raise RuntimeError("Vision-guided user photo try-on failed before provider attempt.")
 
 
+def _generate_local_texture_transfer_user_photo(
+    *,
+    generation: Generation,
+    photo_path: Path,
+    reference_path: Path,
+    mask_path: Path,
+) -> bytes:
+    """Run deterministic provider-free fabric transfer and fail closed on guardrails."""
+
+    settings = get_settings()
+    report: dict[str, object] = {
+        "attempt": 1,
+        "strategy": TRYON_PROVIDER_STRATEGY_LOCAL_TEXTURE_TRANSFER,
+        "provider_called": False,
+        "provider_attempts": 0,
+        "preservation_checked": False,
+        "status": "started",
+    }
+    try:
+        result = transfer_fabric_texture_locally(
+            original_image_path=photo_path,
+            fabric_reference_path=reference_path,
+            mask_image_path=mask_path,
+            min_coverage_percent=settings.user_photo_mask_min_coverage_percent,
+            max_coverage_percent=settings.user_photo_mask_max_coverage_percent,
+        )
+        report["local_texture_transfer_metadata"] = result.metadata.as_dict()
+        image_bytes = result.image_bytes
+        preservation_result = _ensure_user_photo_preservation_safe(
+            source_image_path=photo_path,
+            candidate_image_bytes=image_bytes,
+            mask_image_path=mask_path,
+        )
+        if preservation_result is not None:
+            report["guardrail_metadata"] = _preservation_guardrail_metadata(preservation_result)
+            if preservation_result.normalized_candidate_image_bytes is not None:
+                image_bytes = preservation_result.normalized_candidate_image_bytes
+        report["preservation_checked"] = True
+        report["guardrail_status"] = "passed"
+        report["status"] = "passed"
+        _write_tryon_debug_report(generation, strategy=TRYON_PROVIDER_STRATEGY_LOCAL_TEXTURE_TRANSFER, attempts=[report])
+        return image_bytes
+    except UserPhotoPreservationError as exc:
+        report["preservation_checked"] = True
+        report["guardrail_status"] = "failed"
+        report["guardrail_reason"] = exc.result.reason
+        report["guardrail_metadata"] = _preservation_guardrail_metadata(exc.result)
+        report["status"] = "failed"
+        report["error"] = safe_exception_summary(exc)
+        _write_tryon_debug_report(generation, strategy=TRYON_PROVIDER_STRATEGY_LOCAL_TEXTURE_TRANSFER, attempts=[report])
+        raise
+    except LocalTextureTransferError as exc:
+        report["status"] = "failed"
+        report["error"] = safe_exception_summary(exc)
+        _write_tryon_debug_report(generation, strategy=TRYON_PROVIDER_STRATEGY_LOCAL_TEXTURE_TRANSFER, attempts=[report])
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+
 @router.post(
     "/catalog-style",
     response_model=GenerationRead,
@@ -1265,6 +1329,13 @@ async def _create_user_photo_generation(
                     fabric=fabric,
                     mask_path=mask_result.mask_path,
                     mask_mode=mask_result.mode,
+                )
+            elif strategy == TRYON_PROVIDER_STRATEGY_LOCAL_TEXTURE_TRANSFER:
+                image_bytes = _generate_local_texture_transfer_user_photo(
+                    generation=generation,
+                    photo_path=photo_path,
+                    reference_path=reference_path,
+                    mask_path=mask_result.mask_path,
                 )
             else:
                 image_bytes = _generate_masked_user_photo_with_attempts(
