@@ -2,6 +2,7 @@
 
 import json
 import logging
+import inspect
 from dataclasses import dataclass
 from io import BytesIO
 from math import gcd
@@ -463,6 +464,32 @@ def _prepare_provider_mask_canvas(
     return provider_mask_path
 
 
+def _generate_fabric_on_user_photo(
+    user_photo_path: str,
+    fabric_reference_path: str,
+    prompt: str,
+    *,
+    mask_image_path: str | None,
+    image_size: str | None = None,
+) -> bytes:
+    """Call the provider while staying compatible with narrow test doubles."""
+
+    generate = image_generation_service.generate_fabric_on_user_photo
+    kwargs = {"mask_image_path": mask_image_path}
+    try:
+        signature = inspect.signature(generate)
+    except (TypeError, ValueError):
+        supports_image_size = True
+    else:
+        supports_image_size = (
+            "image_size" in signature.parameters
+            or any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+        )
+    if image_size is not None and supports_image_size:
+        kwargs["image_size"] = image_size
+    return generate(user_photo_path, fabric_reference_path, prompt, **kwargs)
+
+
 def _extract_vision_guided_original_frame(
     image_bytes: bytes,
     provider_size: VisionGuidedProviderSize,
@@ -881,7 +908,7 @@ def _generate_masked_user_photo_with_attempts(
                 "status": "started",
             }
             try:
-                image_bytes = image_generation_service.generate_fabric_on_user_photo(
+                image_bytes = _generate_fabric_on_user_photo(
                     str(provider_photo_path),
                     str(normalized_reference_path),
                     prompt,
@@ -977,7 +1004,7 @@ def _generate_vision_guided_user_photo_with_attempts(
                 "status": "started",
             }
             try:
-                image_bytes = image_generation_service.generate_fabric_on_user_photo(
+                image_bytes = _generate_fabric_on_user_photo(
                     str(provider_photo_path),
                     str(normalized_reference_path),
                     prompt,
