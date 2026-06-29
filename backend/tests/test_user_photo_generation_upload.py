@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 from sqlalchemy import select
 
 from app.config import get_settings
@@ -490,6 +490,142 @@ def test_user_photo_generation_visible_inner_tshirt_preset_uses_narrow_mask_and_
     persisted_mask_path = get_settings().upload_dir / payload["mask_image_url"].removeprefix("/uploads/")
     coverage = calculate_edit_coverage(persisted_mask_path)
     assert 3.0 <= coverage <= 20.0
+
+
+def test_user_photo_generation_local_texture_transfer_completes_without_provider(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    source_bytes = _visible_inner_tshirt_smoke_source_bytes()
+    provider_called = False
+    monkeypatch.setenv("TRYON_PROVIDER_STRATEGY", "local_texture_transfer")
+    monkeypatch.setenv("TRYON_DEBUG_BUNDLE_ENABLED", "true")
+    get_settings.cache_clear()
+
+    def fail_provider(*args, **kwargs) -> bytes:
+        nonlocal provider_called
+        provider_called = True
+        raise AssertionError("local_texture_transfer must not call provider")
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fail_provider)
+
+    try:
+        response = _post_user_photo(
+            client,
+            fabric_id,
+            source_bytes,
+            "image/png",
+            BOT_HEADERS,
+            mask_preset=MASK_PRESET_VISIBLE_INNER_TSHIRT,
+        )
+    finally:
+        monkeypatch.delenv("TRYON_PROVIDER_STRATEGY", raising=False)
+        monkeypatch.delenv("TRYON_DEBUG_BUNDLE_ENABLED", raising=False)
+        get_settings.cache_clear()
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["result_image_url"].startswith("/uploads/generations/")
+    assert provider_called is False
+
+    original = Image.open(BytesIO(source_bytes)).convert("RGB")
+    result_path = get_settings().upload_dir / payload["result_image_url"].removeprefix("/uploads/")
+    mask_path = get_settings().upload_dir / payload["mask_image_url"].removeprefix("/uploads/")
+    with Image.open(result_path) as result_image, Image.open(mask_path) as mask_image:
+        result = result_image.convert("RGB")
+        assert result.size == original.size
+        alpha = mask_image.convert("RGBA").getchannel("A")
+        diff = ImageChops.difference(original, result)
+        diff_pixels = diff.load()
+        alpha_pixels = alpha.load()
+        outside_changed = 0
+        inside_changed = 0
+        for y in range(result.height):
+            for x in range(result.width):
+                if max(diff_pixels[x, y]) > 0:
+                    if alpha_pixels[x, y] < 128:
+                        inside_changed += 1
+                    else:
+                        outside_changed += 1
+    assert inside_changed > 0
+    assert outside_changed == 0
+
+    report_path = get_settings().upload_dir / "tryon-debug" / f"{payload['id']}.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    [attempt] = report["attempts"]
+    assert report["strategy"] == "local_texture_transfer"
+    assert attempt["strategy"] == "local_texture_transfer"
+    assert attempt["provider_called"] is False
+    assert attempt["provider_attempts"] == 0
+    assert attempt["preservation_checked"] is True
+    assert attempt["guardrail_status"] == "passed"
+    metadata = attempt["local_texture_transfer_metadata"]
+    assert metadata["provider_called"] is False
+    assert metadata["outside_mask_mean_delta"] == 0
+    assert metadata["outside_mask_changed_pixel_percent"] == 0
+    assert metadata["hard_mask_coverage_percent"] >= 3.0
+    assert metadata["tile_size"] >= 32
+
+
+def test_user_photo_generation_local_texture_transfer_fail_keeps_result_absent(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    monkeypatch.setenv("TRYON_PROVIDER_STRATEGY", "local_texture_transfer")
+    get_settings.cache_clear()
+
+    def fail_provider(*args, **kwargs) -> bytes:
+        raise AssertionError("local_texture_transfer must not call provider")
+
+    def fake_preservation_safe(
+        *,
+        source_image_path: Path,
+        candidate_image_bytes: bytes,
+        mask_image_path: Path,
+    ) -> None:
+        raise UserPhotoPreservationError(
+            PreservationCheckResult(
+                passes=False,
+                reason="protected_region_drift",
+                message=PRESERVATION_FAILURE_MESSAGE,
+                thresholds=PreservationThresholds(),
+                original_size=(768, 1024),
+                provider_output_size=(768, 1024),
+                mask_size=(768, 1024),
+                aspect_ratio_delta=0.0,
+                size_normalized=False,
+                normalized_size=None,
+            )
+        )
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fail_provider)
+    monkeypatch.setattr(generation_routes, "_ensure_user_photo_preservation_safe", fake_preservation_safe)
+
+    try:
+        response = _post_user_photo(
+            client,
+            fabric_id,
+            _visible_inner_tshirt_smoke_source_bytes(),
+            "image/png",
+            BOT_HEADERS,
+            mask_preset=MASK_PRESET_VISIBLE_INNER_TSHIRT,
+        )
+    finally:
+        monkeypatch.delenv("TRYON_PROVIDER_STRATEGY", raising=False)
+        get_settings.cache_clear()
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["status"] == "failed"
+    assert payload["result_image_url"] is None
+    assert payload["error_message"] == PRESERVATION_FAILURE_MESSAGE
 
 
 def test_user_photo_generation_vision_guided_edit_sends_full_photo_and_reference_without_provider_mask(
