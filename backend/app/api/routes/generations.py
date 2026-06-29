@@ -260,11 +260,14 @@ def build_user_photo_fabric_replacement_prompt(
         details.append(
             "A clothing edit mask is provided. This is a strict inpainting/editing task. "
             "Edit only the transparent/editable clothing region defined by the mask. "
+            "Treat every opaque/protected mask pixel as locked source photography. "
+            "Keep protected pixels visually identical to the first input image except for unavoidable compression. "
             "Return the full-frame edited original photo, not a crop or standalone garment. "
             "Preserve the original image pixel structure outside the editable clothing mask. "
             "Do not change face, eyes, glasses, hair, skin, hands, fingers, body shape, pose, "
             "background, furniture, objects, lighting, camera angle or composition. "
             "Preserve all non-editable regions exactly. "
+            "Do not repaint, relight, smooth, beautify, sharpen, denoise, recolor, or reinterpret protected regions. "
             "Do not insert a new person, product mockup, rectangular patch, sticker, collage, "
             "separate generated crop, or pasted shirt photo."
         )
@@ -471,6 +474,7 @@ def _generate_fabric_on_user_photo(
     *,
     mask_image_path: str | None,
     image_size: str | None = None,
+    input_fidelity: str | None = None,
 ) -> bytes:
     """Call the provider while staying compatible with narrow test doubles."""
 
@@ -479,15 +483,37 @@ def _generate_fabric_on_user_photo(
     try:
         signature = inspect.signature(generate)
     except (TypeError, ValueError):
-        supports_image_size = True
+        supported_kwargs = {"image_size", "input_fidelity"}
+        supports_var_kwargs = True
     else:
-        supports_image_size = (
-            "image_size" in signature.parameters
-            or any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+        supports_var_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()
         )
-    if image_size is not None and supports_image_size:
+        supported_kwargs = set(signature.parameters)
+    if image_size is not None and ("image_size" in supported_kwargs or supports_var_kwargs):
         kwargs["image_size"] = image_size
+    if input_fidelity is not None and ("input_fidelity" in supported_kwargs or supports_var_kwargs):
+        kwargs["input_fidelity"] = input_fidelity
     return generate(user_photo_path, fabric_reference_path, prompt, **kwargs)
+
+
+def _image_edit_fidelity_metadata(model: str, requested: str | None) -> dict[str, object]:
+    decision = image_generation_service.resolve_image_edit_input_fidelity(
+        model=model,
+        requested=requested,
+    )
+    return {
+        "provider_model": model,
+        "endpoint_method": "images.edit",
+        "input_image_count": 2,
+        "first_input_role": "original_user_photo",
+        "second_input_role": "fabric_reference",
+        "mask_applied_to_first_input": True,
+        "input_fidelity_requested": decision.requested,
+        "input_fidelity_applied": decision.applied,
+        "input_fidelity_supported": decision.supported,
+        "input_fidelity_reason": decision.reason,
+    }
 
 
 def _extract_vision_guided_original_frame(
@@ -875,6 +901,11 @@ def _generate_masked_user_photo_with_attempts(
         provider_size = _select_vision_guided_provider_size(photo_path)
         provider_photo_path = _prepare_vision_guided_provider_photo(photo_path, provider_size, tmp_path)
         provider_mask_path = _prepare_provider_mask_canvas(mask_path, provider_size, tmp_path)
+        settings = get_settings()
+        edit_metadata = _image_edit_fidelity_metadata(
+            settings.openai_image_model,
+            settings.tryon_input_fidelity,
+        )
         for attempt in range(1, max_attempts + 1):
             prompt = _build_user_photo_prompt(fabric, mask_used=True, attempt_index=attempt)
             if provider_size.canvas_adapted:
@@ -895,6 +926,7 @@ def _generate_masked_user_photo_with_attempts(
                 "attempt": attempt,
                 "strategy": TRYON_PROVIDER_STRATEGY_CHATGPT_LIKE_MASKED_EDIT,
                 "fabric_reference_normalized": True,
+                **edit_metadata,
                 "requested_provider_size": provider_size.requested_size,
                 "requested_provider_aspect": provider_size.requested_aspect,
                 "original_size": _size_metadata(provider_size.original_size),
@@ -914,6 +946,7 @@ def _generate_masked_user_photo_with_attempts(
                     prompt,
                     mask_image_path=str(provider_mask_path),
                     image_size=provider_size.requested_size,
+                    input_fidelity=edit_metadata["input_fidelity_applied"],
                 )
                 report["provider_called"] = True
                 image_bytes = _extract_vision_guided_original_frame(image_bytes, provider_size)

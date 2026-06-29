@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from contextlib import ExitStack
+from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
 
@@ -36,6 +37,62 @@ USER_PHOTO_EDIT_PROMPT = (
 
 class ImageGenerationProviderError(RuntimeError):
     """Raised for controlled provider failures that should not leak raw details."""
+
+
+@dataclass(frozen=True)
+class InputFidelityDecision:
+    """Provider-safe decision for OpenAI image edit input fidelity."""
+
+    requested: str | None
+    applied: str | None
+    supported: bool
+    reason: str
+
+
+def resolve_image_edit_input_fidelity(
+    *,
+    model: str,
+    requested: str | None,
+) -> InputFidelityDecision:
+    """Return the safe input_fidelity parameter to send for image edits."""
+
+    requested_value = (requested or "").strip().lower()
+    if requested_value in {"", "off", "none", "false", "0"}:
+        return InputFidelityDecision(
+            requested=requested_value or None,
+            applied=None,
+            supported=False,
+            reason="disabled",
+        )
+    if requested_value not in {"high", "low"}:
+        return InputFidelityDecision(
+            requested=requested_value,
+            applied=None,
+            supported=False,
+            reason="unsupported_value",
+        )
+
+    normalized_model = model.strip().lower()
+    if normalized_model.startswith("gpt-image-1"):
+        return InputFidelityDecision(
+            requested=requested_value,
+            applied=requested_value,
+            supported=True,
+            reason="supported",
+        )
+    if normalized_model.startswith("gpt-image-2"):
+        return InputFidelityDecision(
+            requested=requested_value,
+            applied=None,
+            supported=False,
+            reason="gpt_image_2_high_fidelity_automatic",
+        )
+    return InputFidelityDecision(
+        requested=requested_value,
+        applied=None,
+        supported=False,
+        reason="unsupported_model",
+    )
 
 
 def _ensure_configured() -> str:
@@ -83,6 +140,7 @@ def _edit_images(
     prompt: str,
     mask_image_path: str | Path | None = None,
     image_size: str | None = None,
+    input_fidelity: str | None = None,
 ) -> bytes:
     api_key = _ensure_configured()
     settings = get_settings()
@@ -98,6 +156,12 @@ def _edit_images(
                 "quality": settings.openai_image_quality,
                 "output_format": settings.openai_image_output_format,
             }
+            fidelity = resolve_image_edit_input_fidelity(
+                model=settings.openai_image_model,
+                requested=input_fidelity,
+            )
+            if fidelity.applied is not None:
+                kwargs["input_fidelity"] = fidelity.applied
             if mask_image_path:
                 kwargs["mask"] = stack.enter_context(Path(mask_image_path).open("rb"))
             response = client.images.edit(**kwargs)
@@ -127,6 +191,7 @@ def generate_fabric_on_user_photo(
     prompt: str,
     mask_image_path: str | None = None,
     image_size: str | None = None,
+    input_fidelity: str | None = None,
 ) -> bytes:
     """Generate selected fabric texture on a user's uploaded clothing photo."""
 
@@ -135,4 +200,5 @@ def generate_fabric_on_user_photo(
         prompt,
         mask_image_path=mask_image_path,
         image_size=image_size,
+        input_fidelity=input_fidelity,
     )

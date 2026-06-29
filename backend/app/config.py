@@ -106,6 +106,7 @@ class Settings:
     openai_image_quality: str = "medium"
     openai_image_output_format: str = "png"
     openai_image_timeout_seconds: int = 120
+    tryon_input_fidelity: str = "high"
 
     user_photo_mask_mode: str = "off"
     user_photo_require_mask_for_strict_edit: bool = True
@@ -172,6 +173,7 @@ class Settings:
             "openai_image_timeout_seconds": _get_int(
                 "OPENAI_IMAGE_TIMEOUT_SECONDS", cls.openai_image_timeout_seconds, env_file
             ),
+            "tryon_input_fidelity": _get_value("TRYON_INPUT_FIDELITY", cls.tryon_input_fidelity, env_file),
             "user_photo_mask_mode": _get_value("USER_PHOTO_MASK_MODE", cls.user_photo_mask_mode, env_file),
             "user_photo_require_mask_for_strict_edit": _get_bool(
                 "USER_PHOTO_REQUIRE_MASK_FOR_STRICT_EDIT",
