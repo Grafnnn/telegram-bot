@@ -625,7 +625,7 @@ def test_user_photo_generation_local_texture_transfer_fail_keeps_result_absent(
     payload = response.json()
     assert payload["status"] == "failed"
     assert payload["result_image_url"] is None
-    assert payload["error_message"] == PRESERVATION_FAILURE_MESSAGE
+    assert "Не удалось безопасно сохранить исходное фото" in payload["error_message"]
 
 
 def test_user_photo_generation_vision_guided_edit_sends_full_photo_and_reference_without_provider_mask(
