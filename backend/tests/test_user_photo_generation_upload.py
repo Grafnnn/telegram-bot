@@ -735,6 +735,101 @@ def test_user_photo_generation_vision_guided_canvas_adapter_keeps_guardrail_on_o
     assert "compatibility canvas" in prompt
 
 
+def test_user_photo_generation_masked_edit_canvas_adapter_aligns_photo_and_mask(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from app.api.routes import generations as generation_routes
+
+    fabric_id = _create_fabric()
+    source_bytes = _visible_inner_tshirt_smoke_source_bytes()
+    captured: dict[str, object] = {}
+    monkeypatch.setenv("TRYON_PROVIDER_STRATEGY", "chatgpt_like_masked_edit")
+    monkeypatch.setenv("OPENAI_IMAGE_MODEL", "gpt-image-1")
+    get_settings.cache_clear()
+
+    def fake_generate(
+        user_photo_path: str,
+        fabric_reference_path: str,
+        prompt: str,
+        mask_image_path: str | None = None,
+        image_size: str | None = None,
+    ) -> bytes:
+        assert mask_image_path is not None
+        captured["prompt"] = prompt
+        captured["mask_image_path"] = mask_image_path
+        captured["image_size"] = image_size
+        with Image.open(user_photo_path) as provider_input, Image.open(mask_image_path) as provider_mask:
+            captured["provider_input_size"] = provider_input.size
+            captured["provider_mask_size"] = provider_mask.size
+            mask_alpha = provider_mask.convert("RGBA").getchannel("A")
+            captured["mask_padding_alpha"] = mask_alpha.getpixel((0, 0))
+            captured["mask_edit_alpha"] = mask_alpha.getpixel((512, 720))
+            provider_output = provider_input.convert("RGB")
+        # Edit only inside the centered source frame. The route should extract
+        # that 768x1024 frame before running preservation guardrails.
+        ImageDraw.Draw(provider_output).polygon(
+            [
+                (448, 616),
+                (576, 616),
+                (600, 760),
+                (584, 1040),
+                (440, 1040),
+                (424, 760),
+            ],
+            fill=(140, 45, 170),
+        )
+        buffer = BytesIO()
+        provider_output.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+    preservation_called: dict[str, object] = {}
+
+    def fake_preservation_safe(
+        *,
+        source_image_path: Path,
+        candidate_image_bytes: bytes,
+        mask_image_path: Path,
+    ) -> None:
+        preservation_called["source_image_path"] = str(source_image_path)
+        preservation_called["mask_image_path"] = str(mask_image_path)
+        with Image.open(source_image_path) as source_image, Image.open(BytesIO(candidate_image_bytes)) as candidate_image:
+            preservation_called["source_size"] = source_image.size
+            preservation_called["candidate_size"] = candidate_image.size
+
+    monkeypatch.setattr(generation_routes.image_generation_service, "generate_fabric_on_user_photo", fake_generate)
+    monkeypatch.setattr(generation_routes, "_ensure_user_photo_preservation_safe", fake_preservation_safe)
+
+    try:
+        response = _post_user_photo(
+            client,
+            fabric_id,
+            source_bytes,
+            "image/png",
+            BOT_HEADERS,
+            mask_preset=MASK_PRESET_VISIBLE_INNER_TSHIRT,
+        )
+    finally:
+        monkeypatch.delenv("TRYON_PROVIDER_STRATEGY", raising=False)
+        monkeypatch.delenv("OPENAI_IMAGE_MODEL", raising=False)
+        get_settings.cache_clear()
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert captured["image_size"] == "1024x1536"
+    assert captured["provider_input_size"] == (1024, 1536)
+    assert captured["provider_mask_size"] == (1024, 1536)
+    assert captured["mask_padding_alpha"] == 255
+    assert captured["mask_edit_alpha"] == 0
+    assert preservation_called["source_size"] == (768, 1024)
+    assert preservation_called["candidate_size"] == (768, 1024)
+    assert preservation_called["mask_image_path"]
+    prompt = str(captured["prompt"])
+    assert "provider compatibility canvas" in prompt
+    assert "Do not edit the neutral padding" in prompt
+
+
 def test_vision_guided_provider_size_uses_exact_size_for_gpt_image_2(tmp_path, monkeypatch) -> None:
     from app.api.routes import generations as generation_routes
 
